@@ -1,4 +1,4 @@
-# RIAI 2023 Course Project
+# RTAI 2023 Course Project
 
 
 
