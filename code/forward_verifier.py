@@ -6,7 +6,7 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from transforms import propagate_linear_box, check_postcondition
+from transforms import propagate_linear_symbolic, propagate_conv2d_symbolic
 
 DEVICE = "cpu"
 
@@ -14,55 +14,60 @@ DEVICE = "cpu"
 def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
-
-
     
-    print(inputs.shape)
+    # input shape:
+    # mnist (1, 28, 28)
+    # cifar10 (3, 32, 32)
 
-    return 0
+    lb = torch.clamp(inputs - eps, 0, 1)
+    ub = torch.clamp(inputs + eps, 0, 1)
 
-    box_lbs = [torch.clamp(inputs - eps, 0, 1)]
-    box_ubs = [torch.clamp(inputs + eps, 0, 1)]
+    # identity for input layer
+    inputs = torch.eye(lb.numel())
+    inputs = torch.reshape(inputs, (lb.shape[0], lb.shape[1], lb.shape[2], lb.shape[1] * lb.shape[2]))
+    # add constant 0 for bias
+    shape = inputs.shape[:-1] + (1,)
+    inputs = torch.cat((inputs, torch.zeros(shape)), dim=-1)
 
-    verified = False
-
-    # forward pass for box
+    # propagate box through network
     for layer in net:
+        # if sequential, list modules of the sequential
         if isinstance(layer, nn.Flatten):
-            box_lbs.append(torch.flatten(box_lbs[-1]))
-            box_ubs.append(torch.flatten(box_ubs[-1]))
-        elif isinstance(layer, nn.ReLU):
-            raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
+            inputs = torch.flatten(inputs, start_dim=0, end_dim=-2)
         elif isinstance(layer, nn.Linear):
-            lb, ub = propagate_linear_box(box_lbs[-1], box_ubs[-1], layer)
-            box_lbs.append(lb)
-            box_ubs.append(ub)
+            inputs = propagate_linear_symbolic(inputs, layer.weight, layer.bias)
         elif isinstance(layer, nn.Conv2d):
-            raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
-        else:
-            raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
-        
-    verified = check_postcondition(box_lbs[-1], box_ubs[-1], true_label)
-    lb, ub = box_lbs.pop(), box_ubs.pop()
-
-    # backsubstitution
-    # iterate backwards through layers
-    for i, layer in enumerate(reversed(net)):
-        if isinstance(layer, nn.Flatten):
-            lb = torch.reshape(lb, box_lbs.pop().shape)
-            ub = torch.reshape(ub, box_ubs.pop().shape)
-            # don't need to check post-condition here
+            inputs = propagate_conv2d_symbolic(inputs, layer)
         elif isinstance(layer, nn.ReLU):
-            raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
-        elif isinstance(layer, nn.Linear):
-            temp_lb = layer.weight @ box_lbs.pop().squeeze(0) + layer.bias
-            temp_ub = layer.weight @ box_ubs.pop().squeeze(0) + layer.bias
-        elif isinstance(layer, nn.Conv2d):
-            raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
+            # treat as identity (bad over approximation)
+            pass
+        elif isinstance(layer, nn.LeakyReLU):
+            # treat as identity (bad over approximation)
+            pass
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
 
-    return int(verified)
+    lb = lb.flatten()
+    ub = ub.flatten()
+
+    # at the end inputs is always of shape (10, num_symbols + 1)
+
+    ub_out = torch.zeros(inputs.shape[0])
+    lb_out = torch.zeros(inputs.shape[0])
+    # given input matrix and input bounds compute output bounds
+    for i in range(inputs.shape[0]):
+        row = inputs[i,:-1]
+        b = inputs[i,-1]
+        ub_temp = ub.detach().clone()
+        ub_temp[row < 0] = lb[row < 0]
+        lb_temp = lb.detach().clone()
+        lb_temp[row < 0] = ub[row < 0]
+        ub_out[i] = row @ ub_temp + b
+        lb_out[i] = row @ lb_temp + b
+
+    # check post-condition
+    ub_out[true_label] = -float("inf")
+    return lb_out[true_label] > ub_out.max()
 
 
 def main():
