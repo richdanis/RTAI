@@ -6,7 +6,7 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from transforms import propagate_linear_symbolic, propagate_conv2d_symbolic
+from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic
 
 DEVICE = "cpu"
 

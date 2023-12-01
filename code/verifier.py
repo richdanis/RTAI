@@ -6,7 +6,8 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from transforms import propagate_linear_box, check_postcondition
+from symbolic_transforms import check_postcondition
+from box_transforms import propagate_linear_box, propagate_conv2d_box
 
 DEVICE = "cpu"
 
@@ -14,12 +15,6 @@ DEVICE = "cpu"
 def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
-
-
-    
-    print(inputs.shape)
-
-    return 0
 
     box_lbs = [torch.clamp(inputs - eps, 0, 1)]
     box_ubs = [torch.clamp(inputs + eps, 0, 1)]
@@ -38,11 +33,14 @@ def analyze(
             box_lbs.append(lb)
             box_ubs.append(ub)
         elif isinstance(layer, nn.Conv2d):
-            raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
+            lb, ub = propagate_conv2d_box(box_lbs[-1], box_ubs[-1], layer)
+            box_lbs.append(lb)
+            box_ubs.append(ub)
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
         
     verified = check_postcondition(box_lbs[-1], box_ubs[-1], true_label)
+    return int(verified)
     lb, ub = box_lbs.pop(), box_ubs.pop()
 
     # backsubstitution
