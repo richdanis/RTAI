@@ -46,8 +46,7 @@ def propagate_conv2d_box(lb, ub, conv: nn.Conv2d):
         b = conv.bias
         # b is of shape (out_channels,)
 
-        # pass weight, bias and unfolded input through linear layer
-        # issue here is that we have a matrix matrix multiplication and not a matrix vector multiplication
+        # compute bounds with matrix multiplication
         lb, ub = matrix_matrix_mul_box(lb, ub, w, b)
         assert len(lb.shape) == 2
         # reshape to output shape
@@ -62,7 +61,7 @@ def matrix_matrix_mul_box(lb, ub, weight, bias):
         """
         lb_res = torch.zeros(weight.shape[0], lb.shape[1])
         ub_res = torch.zeros(weight.shape[0], lb.shape[1])
-        
+
         for i in range(weight.shape[0]):
                 weight_row = weight[i]
                 for j in range(lb.shape[1]):

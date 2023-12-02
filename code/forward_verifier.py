@@ -7,6 +7,7 @@ import time
 from networks import get_network
 from utils.loading import parse_spec
 from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic
+from box_transforms import propagate_linear_box, propagate_conv2d_box
 
 DEVICE = "cpu"
 
@@ -16,52 +17,84 @@ def analyze(
 ) -> bool:
     
     # input shape:
-    # mnist (1, 28, 28)
-    # cifar10 (3, 32, 32)
+    # mnist (1, 28, 28) -> x_1 , ..., x_784 
+    # cifar10 (3, 32, 32) -> 1_1, ... , x_3072
 
-    lb = torch.clamp(inputs - eps, 0, 1)
-    ub = torch.clamp(inputs + eps, 0, 1)
+    # set weights to no_grad:
+    for param in net.parameters():
+        param.requires_grad = False
 
-    # identity for input layer
-    inputs = torch.eye(lb.numel())
-    inputs = torch.reshape(inputs, (lb.shape[0], lb.shape[1], lb.shape[2], lb.shape[1] * lb.shape[2]))
+    init_lb = torch.clamp(inputs - eps, 0, 1)
+    init_ub = torch.clamp(inputs + eps, 0, 1)
+
+    # n_ij = f(x_1, ... , x_784)
+
+    # n_ij <= f(x_1, ... , x_784) + a
+    # n_ij >= f(x_1, ... , x_784) + a
+
+    # x1 + 87 x1 -27 x2 = 88 x1 - 27 x2
+
+    # n_ij <= ub
+    # n_ij >= lb
+
+    ub_rel = torch.eye(init_lb.numel())
+    ub_rel = torch.reshape(ub_rel, (init_lb.shape[0], init_lb.shape[1], init_lb.shape[2], init_lb.shape[1] * init_lb.shape[2]))
     # add constant 0 for bias
-    shape = inputs.shape[:-1] + (1,)
-    inputs = torch.cat((inputs, torch.zeros(shape)), dim=-1)
+    shape = ub_rel.shape[:-1] + (1,)
+    ub_rel = torch.cat((ub_rel, torch.zeros(shape)), dim=-1)
+    lb_rel = ub_rel.detach().clone()
+
+    lbs_box = [init_lb]
+    ubs_box = [init_ub]
 
     # propagate box through network
     for layer in net:
         # if sequential, list modules of the sequential
+        # all entries in lbs_box must be smaller than all entries in ubs_box
+        assert torch.all(lbs_box[-1] <= ubs_box[-1])
         if isinstance(layer, nn.Flatten):
-            inputs = torch.flatten(inputs, start_dim=0, end_dim=-2)
+            ub_rel = torch.flatten(ub_rel, start_dim=0, end_dim=-2)
+            lbs_box.append(torch.flatten(lbs_box[-1], start_dim=0))
+            ubs_box.append(torch.flatten(ubs_box[-1], start_dim=0))
         elif isinstance(layer, nn.Linear):
-            inputs = propagate_linear_symbolic(inputs, layer.weight, layer.bias)
+            ub_rel = propagate_linear_symbolic(ub_rel, layer.weight, layer.bias)
+            curr_lb, curr_ub = propagate_linear_box(lbs_box[-1], ubs_box[-1], layer)
+            lbs_box.append(curr_lb)
+            ubs_box.append(curr_ub)
         elif isinstance(layer, nn.Conv2d):
-            inputs = propagate_conv2d_symbolic(inputs, layer)
+            ub_rel = propagate_conv2d_symbolic(ub_rel, layer)
+            curr_lb, curr_ub = propagate_conv2d_box(lbs_box[-1], ubs_box[-1], layer)
+            lbs_box.append(curr_lb)
+            ubs_box.append(curr_ub)
         elif isinstance(layer, nn.ReLU):
             # treat as identity (bad over approximation)
+            ubs_box.append(layer(ubs_box[-1]))
+            lbs_box.append(layer(lbs_box[-1]))
             pass
         elif isinstance(layer, nn.LeakyReLU):
             # treat as identity (bad over approximation)
+            ubs_box.append(layer(ubs_box[-1]))
+            lbs_box.append(layer(lbs_box[-1]))
             pass
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
 
-    lb = lb.flatten()
-    ub = ub.flatten()
+    init_lb = init_lb.flatten()
+    init_ub = init_ub.flatten()
 
-    # at the end inputs is always of shape (10, num_symbols + 1)
+    # at the end ub_rel is always of shape (10, num_symbols + 1)
+    # for mnist (10, 785)
 
-    ub_out = torch.zeros(inputs.shape[0])
-    lb_out = torch.zeros(inputs.shape[0])
+    ub_out = torch.zeros(ub_rel.shape[0])
+    lb_out = torch.zeros(ub_rel.shape[0])
     # given input matrix and input bounds compute output bounds
-    for i in range(inputs.shape[0]):
-        row = inputs[i,:-1]
-        b = inputs[i,-1]
-        ub_temp = ub.detach().clone()
-        ub_temp[row < 0] = lb[row < 0]
-        lb_temp = lb.detach().clone()
-        lb_temp[row < 0] = ub[row < 0]
+    for i in range(ub_rel.shape[0]):
+        row = ub_rel[i,:-1]
+        b = ub_rel[i,-1]
+        ub_temp = init_ub.detach().clone()
+        ub_temp[row < 0] = init_lb[row < 0]
+        lb_temp = init_lb.detach().clone()
+        lb_temp[row < 0] = init_ub[row < 0]
         ub_out[i] = row @ ub_temp + b
         lb_out[i] = row @ lb_temp + b
 

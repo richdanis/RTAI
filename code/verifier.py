@@ -40,9 +40,10 @@ def analyze(
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
         
     verified = check_postcondition(box_lbs[-1], box_ubs[-1], true_label)
-    return int(verified)
     lb, ub = box_lbs.pop(), box_ubs.pop()
 
+    # hard code symbolic bounds
+    symbolic = torch.ones_like(lb.shape[1], lb.shape[1])
     # backsubstitution
     # iterate backwards through layers
     for i, layer in enumerate(reversed(net)):
@@ -53,8 +54,15 @@ def analyze(
         elif isinstance(layer, nn.ReLU):
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
         elif isinstance(layer, nn.Linear):
-            temp_lb = layer.weight @ box_lbs.pop().squeeze(0) + layer.bias
-            temp_ub = layer.weight @ box_ubs.pop().squeeze(0) + layer.bias
+            # need to expand each symbol
+            for i in range(lb.shape[0]):
+                temp = symbolic[i].clone()
+                temp = temp.squeeze(1)
+                temp = temp * layer.weight
+                temp = temp.sum(dim=1)
+                temp = temp + layer.bias[i]
+                symbolic[i] = temp
+
         elif isinstance(layer, nn.Conv2d):
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
         else:
