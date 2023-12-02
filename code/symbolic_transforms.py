@@ -220,3 +220,69 @@ def propagate_conv2d_rel(lb_rel, ub_rel, conv: nn.Conv2d):
         ub_res = ub_res.view(out_shape)
 
         return lb_res, ub_res
+
+def propagate_ReLU_rel(lb_rel, ub_rel, lb, ub):
+
+        upper_slope = ub / (ub - lb)
+
+        ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
+
+        # flatten ub, ub_rel
+        ub = ub.flatten(start_dim=0)
+        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+
+        ub_rel[ub < 0,:] = 0
+
+        # flatten lb, lb_rel
+        lb = lb.flatten(start_dim=0)
+        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+
+        lb_rel[lb < 0,:] = 0
+
+        lb_rel = lb_rel.view(ub_rel.shape)
+        ub_rel = ub_rel.view(ub_rel.shape)
+
+        return lb_rel, ub_rel
+
+
+def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
+
+        # init_lb: (1, 28, 28) or (3, 32, 32)
+
+        init_lb = init_lb.flatten()
+        init_ub = init_ub.flatten()
+
+        lb_rel = torch.flatten(lb_rel, start_dim=0, end_dim=-2)
+        ub_rel = torch.flatten(ub_rel, start_dim=0, end_dim=-2)
+
+        lb_res = torch.empty(lb_rel.shape[0])
+        ub_res = torch.empty(ub_rel.shape[0])
+
+        # given input matrix and input bounds compute output bounds
+        for i in range(ub_rel.shape[0]):
+
+                ub_temp = ub_rel[i,:-1].clone()
+                lb_temp = lb_rel[i,:-1].clone()
+                ub_b = ub_rel[i,-1].clone()
+                lb_b = lb_rel[i,-1].clone()
+
+                init_ub_temp = init_ub.clone()
+                init_lb_temp = init_lb.clone()
+
+                init_ub_temp[ub_temp < 0] = init_lb[ub_temp < 0]
+                init_lb_temp[ub_temp < 0] = init_ub[ub_temp < 0]
+
+                ub_res[i] = ub_temp @ init_ub_temp + ub_b
+
+                init_ub_temp = init_ub.clone()
+                init_lb_temp = init_lb.clone()
+
+                init_ub_temp[lb_temp < 0] = init_lb[lb_temp < 0]
+                init_lb_temp[lb_temp < 0] = init_ub[lb_temp < 0]
+
+                lb_res[i] = lb_temp @ init_lb_temp + lb_b
+
+        lb_res = lb_res.view(lb_rel.shape[:-1])
+        ub_res = ub_res.view(ub_rel.shape[:-1])
+
+        return lb_res, ub_res
