@@ -1,7 +1,47 @@
 import torch
 import torch.nn as nn
 
-        
+
+def propagate_linear_rel(lb_rel, ub_rel, weight, bias):
+        """
+        Propagate an abstract box through a linear layer.
+        """
+        # inputs is matrix of form (input_neurons, n_symbols)
+        # multiply each column of weight matrix with each row of inputs and sum
+        # then add bias
+        # lb_rel : (n, 785)
+        # lb_rel : (n, 785)
+
+        # weight matrix : (m, n)
+        # bias :(m,)
+        # output : (m, 785)
+        lb_res = torch.empty(weight.shape[0], lb_rel.shape[1])
+        ub_res = torch.empty(weight.shape[0], lb_rel.shape[1])
+        for i in range(weight.shape[0]):
+
+               row = weight[i,:]
+
+               lb_temp = lb_rel.clone()
+               ub_temp = ub_rel.clone()
+
+               lb_temp[row < 0,:] = ub_rel[row < 0,:]
+               ub_temp[row < 0,:] = lb_rel[row < 0,:]
+
+               row = row.unsqueeze(1)
+
+               lb_temp = row * lb_temp
+               ub_temp = row * ub_temp
+
+               lb_temp = lb_temp.sum(dim=0)
+               ub_temp = ub_temp.sum(dim=0)
+
+               lb_temp[-1] = lb_temp[-1] + bias[i]
+               ub_temp[-1] = ub_temp[-1] + bias[i]
+
+               lb_res[i] = lb_temp
+               ub_res[i] = ub_temp
+        return lb_res, ub_res
+
 def propagate_linear_symbolic(inputs, weight, bias):
         """
         Propagate an abstract box through a linear layer.

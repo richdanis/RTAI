@@ -6,7 +6,7 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic
+from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic, propagate_linear_rel
 from box_transforms import propagate_linear_box, propagate_conv2d_box
 
 DEVICE = "cpu"
@@ -54,10 +54,12 @@ def analyze(
         assert torch.all(lbs_box[-1] <= ubs_box[-1])
         if isinstance(layer, nn.Flatten):
             ub_rel = torch.flatten(ub_rel, start_dim=0, end_dim=-2)
+            lb_rel = torch.flatten(lb_rel, start_dim=0, end_dim=-2)
             lbs_box.append(torch.flatten(lbs_box[-1], start_dim=0))
             ubs_box.append(torch.flatten(ubs_box[-1], start_dim=0))
         elif isinstance(layer, nn.Linear):
-            ub_rel = propagate_linear_symbolic(ub_rel, layer.weight, layer.bias)
+            #ub_rel = propagate_linear_symbolic(ub_rel, layer.weight, layer.bias)
+            lb_rel, ub_rel = propagate_linear_rel(lb_rel, ub_rel, layer.weight, layer.bias)
             curr_lb, curr_ub = propagate_linear_box(lbs_box[-1], ubs_box[-1], layer)
             lbs_box.append(curr_lb)
             ubs_box.append(curr_ub)
@@ -84,6 +86,11 @@ def analyze(
 
     # at the end ub_rel is always of shape (10, num_symbols + 1)
     # for mnist (10, 785)
+
+    # w_1 x_1 + ... + w_784 x_784 + b
+    # f(alpha_1, alpha_2, ...)
+    # target: lower bound maximieren
+    # other: upper bound minimieren
 
     ub_out = torch.zeros(ub_rel.shape[0])
     lb_out = torch.zeros(ub_rel.shape[0])
