@@ -226,8 +226,36 @@ def propagate_ReLU_rel(lb_rel, ub_rel, lb, ub):
         upper_slope = ub / (ub - lb)
 
         ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
+        #shouldn't put here also lb_rel = torch.zeros_like(lb_rel) ??
 
         # flatten ub, ub_rel
+        ub = ub.flatten(start_dim=0)
+        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+
+        ub_rel[ub < 0,:] = 0
+
+        # flatten lb, lb_rel
+        lb = lb.flatten(start_dim=0)
+        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+
+        lb_rel[lb < 0,:] = 0
+
+        lb_rel = lb_rel.view(ub_rel.shape)
+        ub_rel = ub_rel.view(ub_rel.shape)
+
+        return lb_rel, ub_rel
+
+def propagate_ReLU_rel_2(lb_rel, ub_rel, lb, ub):
+        """ 
+        the second relaxation of the ReLu
+        """
+
+        upper_slope = ub / (ub - lb)
+
+        ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
+        lb_rel = ub_rel.clone()
+
+        # flatten ub, ub_rel ----> Stays the same
         ub = ub.flatten(start_dim=0)
         ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
 
