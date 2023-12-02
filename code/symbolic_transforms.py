@@ -4,17 +4,8 @@ import torch.nn as nn
 
 def propagate_linear_rel(lb_rel, ub_rel, weight, bias):
         """
-        Propagate an abstract box through a linear layer.
+        Propagate relational bounds through a linear layer.
         """
-        # inputs is matrix of form (input_neurons, n_symbols)
-        # multiply each column of weight matrix with each row of inputs and sum
-        # then add bias
-        # lb_rel : (n, 785)
-        # lb_rel : (n, 785)
-
-        # weight matrix : (m, n)
-        # bias :(m,)
-        # output : (m, 785)
         lb_res = torch.empty(weight.shape[0], lb_rel.shape[1])
         ub_res = torch.empty(weight.shape[0], lb_rel.shape[1])
         for i in range(weight.shape[0]):
@@ -44,16 +35,11 @@ def propagate_linear_rel(lb_rel, ub_rel, weight, bias):
 
 def propagate_linear_symbolic(inputs, weight, bias):
         """
-        Propagate an abstract box through a linear layer.
+        Propagate a relational equation through a linear layer.
         """
         # inputs is matrix of form (input_neurons, n_symbols)
         # multiply each column of weight matrix with each row of inputs and sum
-        # then add bias
-        # output is matrix of form (output_neurons, n_symbols)
-        # print("inputs:",inputs.shape)
-        # print("weight matrix:", weight.shape)
-        # print("bias:", bias.shape)
-        # assert False
+        # then add bia
         res = torch.zeros(weight.shape[0], inputs.shape[1])
         for i in range(weight.shape[0]):
                 # multiply each column of weight matrix with each row of inputs
@@ -146,9 +132,91 @@ def propagate_conv2d_symbolic(inputs, conv: nn.Conv2d):
 
         return res
 
-def check_postcondition(lb, ub, true_label):
+def matrix_matrix_mul_rel(lb_rel, ub_rel, weight, bias):
         """
-        Check if the post-condition is satisfied.
+        Propagate an abstract box through a matrix multiplication.
         """
-        ub[:,true_label] = -float("inf")
-        return lb[:,true_label] > ub.max()
+        lb_res = torch.empty(weight.shape[0], lb_rel.shape[1], lb_rel.shape[2])
+        ub_res = torch.empty(weight.shape[0], lb_rel.shape[1], lb_rel.shape[2])
+        for i in range(weight.shape[0]):
+                row = weight[i,:]
+                for j in range(lb_rel.shape[1]):
+                        # multiply each column of weight matrix with each row of inputs
+                        lb_temp = lb_rel[:,j,:].clone()
+                        ub_temp = ub_rel[:,j,:].clone()
+
+                        lb_temp[row < 0,:] = ub_temp[row < 0,:]
+                        ub_temp[row < 0,:] = lb_rel[:,j,:][row < 0,:]
+
+                        lb_temp = row.unsqueeze(1) * lb_temp
+                        ub_temp = row.unsqueeze(1) * ub_temp
+
+                        lb_temp = lb_temp.sum(dim=0)
+                        ub_temp = ub_temp.sum(dim=0)
+                        # sum over rows
+                        lb_temp[-1] = lb_temp[-1] + bias[i]
+                        ub_temp[-1] = ub_temp[-1] + bias[i]
+                        #
+                        lb_res[i,j] = lb_temp
+                        ub_res[i,j] = ub_temp
+        return lb_res, ub_res
+
+def propagate_conv2d_rel(lb_rel, ub_rel, conv: nn.Conv2d):
+        """
+        Propagate relational bounds through a convolutional layer.
+        lb_rel shape: (in_channels, height, width, number_of_symbols)
+        """
+        assert len(lb_rel.shape) == 4
+        # get number of channels
+        out_channels = conv.weight.shape[0]
+        kernel_size = conv.weight.shape[2]
+        stride = conv.stride[0]
+        padding = conv.padding[0]
+
+        # compute output shape
+        out_height = (lb_rel.shape[1] + 2 * padding - kernel_size) // stride + 1
+        out_width = (lb_rel.shape[2] + 2 * padding - kernel_size) // stride + 1
+        out_shape = (out_channels, out_height, out_width, lb_rel.shape[-1])
+
+        # index array
+        shape = torch.tensor(lb_rel.shape)
+        num_ind = shape[:-1].prod()
+        ind = torch.arange(0, num_ind, dtype=torch.float)
+        ind = ind.reshape(lb_rel.shape[:-1])
+
+        # unfold index array
+        ind = torch.nn.functional.unfold(ind, (kernel_size, kernel_size), stride=stride, padding=padding)
+        # change to int
+        ind = ind.int()
+
+        # flatten input
+        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+
+        assert len(ind.shape) == 2
+        # ind is now of shape (in_channels * kernel_size * kernel_size, num_patches)
+        # unfold input
+
+        lb_unfold = torch.empty(ind.shape + (lb_rel.shape[-1],))
+        ub_unfold = torch.empty(ind.shape + (ub_rel.shape[-1],))
+        for i in range(ind.shape[0]):
+                for j in range(ind.shape[1]):
+                        lb_unfold[i, j] = lb_rel[ind[i, j]]
+                        ub_unfold[i, j] = ub_rel[ind[i, j]]
+
+        # get weight and bias
+        w = conv.weight
+        w = w.view(w.shape[0], -1)
+        # w is now of shape (out_channels, in_channels * kernel_size * kernel_size)
+        b = conv.bias
+        # b is of shape (out_channels,)
+
+        # pass weight, bias and lb_unfold input through linear layer
+        # issue here is that we have a matrix matrix multiplication and not a matrix vector multiplication
+        lb_res, ub_res = matrix_matrix_mul_rel(lb_unfold, ub_unfold, w, b)
+        assert len(lb_res.shape) == 3
+        # reshape to output shape
+        lb_res = lb_res.view(out_shape)
+        ub_res = ub_res.view(out_shape)
+
+        return lb_res, ub_res

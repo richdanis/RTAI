@@ -6,7 +6,7 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic, propagate_linear_rel
+from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic, propagate_linear_rel, propagate_conv2d_rel
 from box_transforms import propagate_linear_box, propagate_conv2d_box
 
 DEVICE = "cpu"
@@ -17,8 +17,13 @@ def analyze(
 ) -> bool:
     
     # input shape:
-    # mnist (1, 28, 28) -> x_1 , ..., x_784 
+    # mnist (1, 28, 28) -> x_1 , ..., x_784
     # cifar10 (3, 32, 32) -> 1_1, ... , x_3072
+
+    # n_ij <= f(x_1, ... , x_784) + b- > (785,)
+    # n_ij >= f(x_1, ... , x_784) + b -> (785,)
+
+    # i-th layer: m neurons -> (m, 785)
 
     # set weights to no_grad:
     for param in net.parameters():
@@ -64,7 +69,8 @@ def analyze(
             lbs_box.append(curr_lb)
             ubs_box.append(curr_ub)
         elif isinstance(layer, nn.Conv2d):
-            ub_rel = propagate_conv2d_symbolic(ub_rel, layer)
+            #ub_rel = propagate_conv2d_symbolic(ub_rel, layer)
+            lb_rel, ub_rel = propagate_conv2d_rel(lb_rel, ub_rel, layer)
             curr_lb, curr_ub = propagate_conv2d_box(lbs_box[-1], ubs_box[-1], layer)
             lbs_box.append(curr_lb)
             ubs_box.append(curr_ub)
@@ -81,6 +87,8 @@ def analyze(
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
 
+    # CHECK CONDITION
+
     init_lb = init_lb.flatten()
     init_ub = init_ub.flatten()
 
@@ -89,6 +97,8 @@ def analyze(
 
     # w_1 x_1 + ... + w_784 x_784 + b
     # f(alpha_1, alpha_2, ...)
+    # 10 output classes
+    # target class: lowerbound > upperbound of other classes
     # target: lower bound maximieren
     # other: upper bound minimieren
 
