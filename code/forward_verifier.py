@@ -6,7 +6,7 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic, propagate_linear_rel, propagate_conv2d_rel, evaluate_bounds, propagate_ReLU_rel, propagate_ReLU_rel_2, propagate_ReLU_rel_alpha, propagate_ReLU_rel_mod
+from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic, propagate_linear_rel, propagate_conv2d_rel, evaluate_bounds, propagate_ReLU_rel, propagate_ReLU_rel_2, propagate_ReLU_rel_alpha, propagate_ReLU_rel_mod, propagate_leakyReLU_rel
 from box_transforms import propagate_linear_box, propagate_conv2d_box
 
 DEVICE = "cpu"
@@ -77,7 +77,7 @@ def analyze(
             num_relus += 1
             pass
 
-    #print("number of relus is", num_relus)
+    print("number of relus is", num_relus)
 
 
 
@@ -108,13 +108,17 @@ def analyze(
             #num_relus += 1
             
             lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
-            lb_rel, ub_rel = propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, alpha = 0.5)
+            lb_rel, ub_rel = propagate_ReLU_rel_mod(lb_rel, ub_rel, lb, ub)
             # ubs_box.append(layer(ubs_box[-1]))
             # lbs_box.append(layer(lbs_box[-1]))
         elif isinstance(layer, nn.LeakyReLU):
             # treat as identity (bad over approximation)
             # ubs_box.append(layer(ubs_box[-1]))
             # lbs_box.append(layer(lbs_box[-1]))
+            slope = layer.negative_slope
+            print("slope is", slope)
+            lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
+            lb_rel, ub_rel = propagate_leakyReLU_rel(lb_rel, ub_rel, lb, ub, slope)
             pass
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')

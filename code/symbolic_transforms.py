@@ -340,6 +340,92 @@ def propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, alpha):
 
         return lb_rel, ub_rel
 
+
+def propagate_leakyReLU_rel(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
+        lb_rel_bef = lb_rel.clone()
+        ub_rel_bef = ub_rel.clone()
+        lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
+        ub_rel_bef = ub_rel_bef.flatten(start_dim=0, end_dim=-2)
+        s = slope
+
+
+
+        
+        if (slope <=1.0):
+                upper_slope = (ub - s*lb) / (ub - lb)
+                ub = ub.unsqueeze_(-1)
+                lb = lb.unsqueeze_(-1)
+                upper_slope = upper_slope.unsqueeze_(-1)
+                #lower_slope = lower_slope.unsqueeze_(-1)
+
+                #lower_slope = torch.ones_like(upper_slope)
+
+
+                #lower_slope = lower_slope.unsqueeze_(-1)
+
+                ub_rel = upper_slope * ub_rel + lb*(s - upper_slope)
+
+                lb_rel = alpha * lb_rel.clone()
+
+                
+
+                # flatten ub, ub_rel
+                ub = ub.flatten(start_dim=0)
+                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+
+                ub_rel[ub < 0,:] = s*ub_rel_bef[ub < 0,:].clone()
+                #lb_rel[ub < 0,:] = s*lb_rel_bef[ub < 0,:].clone()
+
+                # flatten lb, lb_rel
+                lb = lb.flatten(start_dim=0)
+                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+
+                #lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
+                lb_rel[lb > 0,:] = lb_rel_bef[lb > 0,:].clone()
+                #ub_rel[lb > 0,:] = ub_rel_bef[lb > 0,:].clone()
+
+                lb_rel = lb_rel.view(lb_rel.shape)
+                ub_rel = ub_rel.view(ub_rel.shape)
+
+                return lb_rel, ub_rel
+
+        elif (slope> 1.0):
+                upper_slope = (ub - lb)/ub
+                lower_slope = (ub - lb*s)/(ub - lb)
+                ub = ub.unsqueeze_(-1)
+                lb = lb.unsqueeze_(-1)
+                upper_slope = upper_slope.unsqueeze_(-1)
+                lower_slope = lower_slope.unsqueeze_(-1)
+
+                ub_rel = upper_slope * ub_rel - lb*upper_slope
+
+                lb_rel = lower_slope * lb_rel + lb*(s - lower_slope)
+
+                # flatten ub, ub_rel
+                ub = ub.flatten(start_dim=0)
+                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+
+                ub_rel[ub < 0,:] = s* ub_rel_bef[ub < 0,:].clone()
+                lb_rel[ub < 0,:] = s* lb_rel_bef[ub < 0,:].clone()
+
+
+                # flatten lb, lb_rel
+                lb = lb.flatten(start_dim=0)
+                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+
+                #lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
+                lb_rel[lb > 0,:] = lb_rel_bef[lb > 0,:].clone()
+                ub_rel[lb > 0,:] = ub_rel_bef[lb > 0,:].clone()
+
+                lb_rel = lb_rel.view(lb_rel.shape)
+                ub_rel = ub_rel.view(ub_rel.shape)
+
+                return lb_rel, ub_rel
+
+
+
+        
+
 def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
 
         # init_lb: (1, 28, 28) or (3, 32, 32)
