@@ -222,7 +222,6 @@ def propagate_conv2d_rel(lb_rel, ub_rel, conv: nn.Conv2d):
         return lb_res, ub_res
 
 def propagate_ReLU_rel(lb_rel, ub_rel, lb, ub):
-
         upper_slope = ub / (ub - lb)
 
         ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
@@ -245,6 +244,43 @@ def propagate_ReLU_rel(lb_rel, ub_rel, lb, ub):
 
         return lb_rel, ub_rel
 
+
+def propagate_ReLU_rel_mod(lb_rel, ub_rel, lb, ub):
+
+        lb_rel_bef = lb_rel.clone()
+        ub_rel_bef = ub_rel.clone()
+
+
+        upper_slope = ub / (ub - lb)
+        ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
+
+        ub = ub.unsqueeze(-1) 
+        lb = lb.unsqueeze(-1)
+
+        # flatten ub, ub_rel
+        ub = ub.flatten(start_dim=0)
+        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+        #print("shape ub_rel", ub_rel.shape)
+        ub_rel[ub < 0,:] = 0
+        lb_rel[ub < 0,:] = 0
+
+        # flatten lb, lb_rel
+        
+        lb = lb.flatten(start_dim=0)
+        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+
+        lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
+
+        lb_rel[lb > 0,:] = lb_rel_bef[lb > 0,:].clone()
+        #ub_rel[lb > 0,:] = ub_rel_bef[lb > 0,:].clone()
+
+        lb_rel = lb_rel.view(lb_rel.shape)
+        ub_rel = ub_rel.view(ub_rel.shape)
+
+        return lb_rel, ub_rel
+
+
+
 def propagate_ReLU_rel_2(lb_rel, ub_rel, lb, ub):
         """ 
         the second relaxation of the ReLu
@@ -253,7 +289,7 @@ def propagate_ReLU_rel_2(lb_rel, ub_rel, lb, ub):
         upper_slope = ub / (ub - lb)
 
         ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
-        lb_rel = ub_rel.clone()
+        lb_rel = lb_rel.clone()
 
         # flatten ub, ub_rel ----> Stays the same
         ub = ub.flatten(start_dim=0)
@@ -265,13 +301,44 @@ def propagate_ReLU_rel_2(lb_rel, ub_rel, lb, ub):
         lb = lb.flatten(start_dim=0)
         lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
 
-        lb_rel[lb < 0,:] = 0
+        #lb_rel[lb < 0,:] = 0#Why?
 
         lb_rel = lb_rel.view(ub_rel.shape)
         ub_rel = ub_rel.view(ub_rel.shape)
 
         return lb_rel, ub_rel
 
+def propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, alpha):
+
+        lb_rel_bef = lb_rel.clone()
+        ub_rel_bef = ub_rel.clone()
+        upper_slope = ub / (ub - lb)
+
+        ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1)) # the same
+        #shouldn't put here also lb_rel = torch.zeros_like(lb_rel) ??
+
+        lb_rel = alpha * lb_rel.clone()
+
+        # flatten ub, ub_rel
+        ub = ub.flatten(start_dim=0)
+        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+
+        ub_rel[ub < 0,:] = 0
+        
+
+        # flatten lb, lb_rel
+        lb = lb.flatten(start_dim=0)
+        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+
+        lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
+        
+        lb_rel[lb > 0,:] = lb_rel_bef[lb > 0,:].clone()
+
+
+        lb_rel = lb_rel.view(ub_rel.shape)
+        ub_rel = ub_rel.view(ub_rel.shape)
+
+        return lb_rel, ub_rel
 
 def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
 

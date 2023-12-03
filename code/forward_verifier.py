@@ -6,10 +6,24 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic, propagate_linear_rel, propagate_conv2d_rel, evaluate_bounds, propagate_ReLU_rel
+from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic, propagate_linear_rel, propagate_conv2d_rel, evaluate_bounds, propagate_ReLU_rel, propagate_ReLU_rel_2, propagate_ReLU_rel_alpha, propagate_ReLU_rel_mod
 from box_transforms import propagate_linear_box, propagate_conv2d_box
 
 DEVICE = "cpu"
+#### not such a good idea ->>> outputs huge numbers
+def output_area(lb, ub):
+    "return area of output box"
+    return float(torch.prod(ub - lb))
+
+
+def output_diff_lb2ub(lb, ub, tue_label):
+    "return difference between lower bound of target and max upper bound of other classes"
+    ub[tue_label] = -float("inf")
+    return float(lb[tue_label] - ub.max())
+
+
+
+
 
 
 def analyze(
@@ -52,6 +66,21 @@ def analyze(
     # lbs_box = [init_lb]
     # ubs_box = [init_ub]
 
+    #number of relus
+    num_relus = 0
+    #empty vector for alpha values. alpha_i is the alpha value for the i-th relu
+    #alpha_vector = torch.empty(10)
+
+    #check how many relus there are in the current network
+    for layer in net:
+        if isinstance(layer, nn.ReLU):
+            num_relus += 1
+            pass
+
+    #print("number of relus is", num_relus)
+
+
+
     # propagate box through network
     for layer in net:
         # if sequential, list modules of the sequential
@@ -76,8 +105,10 @@ def analyze(
             # ubs_box.append(curr_ub)
         elif isinstance(layer, nn.ReLU):
             # treat as identity (bad over approximation)
+            #num_relus += 1
+            
             lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
-            lb_rel, ub_rel = propagate_ReLU_rel(lb_rel, ub_rel, lb, ub)
+            lb_rel, ub_rel = propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, alpha = 0.5)
             # ubs_box.append(layer(ubs_box[-1]))
             # lbs_box.append(layer(lbs_box[-1]))
         elif isinstance(layer, nn.LeakyReLU):
@@ -91,6 +122,11 @@ def analyze(
     # CHECK CONDITION
 
     lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
+
+    # #calculate the area of hte output box and print it
+    # print("area of output is",output_area(lb, ub))
+    #calculate the difference between lower bound of target and max upper bound of other classes and print it
+    print("difference between lower bound of target and max upper bound of other classes is",output_diff_lb2ub(lb, ub, true_label))
     ub[true_label] = -float("inf")
     return lb[true_label] > ub.max()
 
