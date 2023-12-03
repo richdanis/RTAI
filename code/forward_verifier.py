@@ -6,24 +6,16 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from symbolic_transforms import propagate_linear_symbolic, propagate_conv2d_symbolic, propagate_linear_rel, propagate_conv2d_rel, evaluate_bounds, propagate_ReLU_rel, propagate_ReLU_rel_2, propagate_ReLU_rel_alpha, propagate_ReLU_rel_mod
+from symbolic_transforms import *
 from box_transforms import propagate_linear_box, propagate_conv2d_box
 
 DEVICE = "cpu"
-#### not such a good idea ->>> outputs huge numbers
-def output_area(lb, ub):
-    "return area of output box"
-    return float(torch.prod(ub - lb))
 
 
 def output_diff_lb2ub(lb, ub, tue_label):
     "return difference between lower bound of target and max upper bound of other classes"
     ub[tue_label] = -float("inf")
     return float(lb[tue_label] - ub.max())
-
-
-
-
 
 
 def analyze(
@@ -34,27 +26,12 @@ def analyze(
     # mnist (1, 28, 28) -> x_1 , ..., x_784
     # cifar10 (3, 32, 32) -> 1_1, ... , x_3072
 
-    # n_ij <= f(x_1, ... , x_784) + b- > (785,)
-    # n_ij >= f(x_1, ... , x_784) + b -> (785,)
-
-    # i-th layer: m neurons -> (m, 785)
-
     # set weights to no_grad:
     for param in net.parameters():
         param.requires_grad = False
 
     init_lb = torch.clamp(inputs - eps, 0, 1)
     init_ub = torch.clamp(inputs + eps, 0, 1)
-
-    # n_ij = f(x_1, ... , x_784)
-
-    # n_ij <= f(x_1, ... , x_784) + a
-    # n_ij >= f(x_1, ... , x_784) + a
-
-    # x1 + 87 x1 -27 x2 = 88 x1 - 27 x2
-
-    # n_ij <= ub
-    # n_ij >= lb
 
     ub_rel = torch.eye(init_lb.numel())
     ub_rel = torch.reshape(ub_rel, (init_lb.shape[0], init_lb.shape[1], init_lb.shape[2], init_lb.shape[1] * init_lb.shape[2]))
@@ -63,102 +40,55 @@ def analyze(
     ub_rel = torch.cat((ub_rel, torch.zeros(shape)), dim=-1)
     lb_rel = ub_rel.detach().clone()
 
-    # lbs_box = [init_lb]
-    # ubs_box = [init_ub]
+    alphas = torch.empty(0)
+    alphas.requires_grad = True
+    neg_slopes = torch.empty(0)
 
-    #number of relus
-    num_relus = 0
-    #empty vector for alpha values. alpha_i is the alpha value for the i-th relu
-    #alpha_vector = torch.empty(10)
-
-    #check how many relus there are in the current network
-    for layer in net:
-        if isinstance(layer, nn.ReLU):
-            num_relus += 1
-            pass
-
-    #print("number of relus is", num_relus)
-
-
+    optimizer = torch.optim.Adam([alphas], lr=0.01)
 
     # propagate box through network
     for layer in net:
-        # if sequential, list modules of the sequential
-        # all entries in lbs_box must be smaller than all entries in ubs_box
-        #assert torch.all(lbs_box[-1] <= ubs_box[-1])
         if isinstance(layer, nn.Flatten):
             ub_rel = torch.flatten(ub_rel, start_dim=0, end_dim=-2)
             lb_rel = torch.flatten(lb_rel, start_dim=0, end_dim=-2)
-            # lbs_box.append(torch.flatten(lbs_box[-1], start_dim=0))
-            # ubs_box.append(torch.flatten(ubs_box[-1], start_dim=0))
         elif isinstance(layer, nn.Linear):
-            #ub_rel = propagate_linear_symbolic(ub_rel, layer.weight, layer.bias)
             lb_rel, ub_rel = propagate_linear_rel(lb_rel, ub_rel, layer.weight, layer.bias)
-            # curr_lb, curr_ub = propagate_linear_box(lbs_box[-1], ubs_box[-1], layer)
-            # lbs_box.append(curr_lb)
-            # ubs_box.append(curr_ub)
         elif isinstance(layer, nn.Conv2d):
-            #ub_rel = propagate_conv2d_symbolic(ub_rel, layer)
             lb_rel, ub_rel = propagate_conv2d_rel(lb_rel, ub_rel, layer)
-            # curr_lb, curr_ub = propagate_conv2d_box(lbs_box[-1], ubs_box[-1], layer)
-            # lbs_box.append(curr_lb)
-            # ubs_box.append(curr_ub)
         elif isinstance(layer, nn.ReLU):
-            # treat as identity (bad over approximation)
-            #num_relus += 1
-            
             lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
-            lb_rel, ub_rel = propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, alpha = 0.5)
-            # ubs_box.append(layer(ubs_box[-1]))
-            # lbs_box.append(layer(lbs_box[-1]))
+            curr_alphas = 0.5 * torch.ones(lb.numel())
+            curr_alphas.requires_grad = True
+            neg_slopes = torch.cat((neg_slopes, torch.zeros(lb.numel())))
+            lb_rel, ub_rel = propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, neg_slope=0, alpha=curr_alphas)
+            alphas = torch.cat((alphas, curr_alphas))
         elif isinstance(layer, nn.LeakyReLU):
-            # treat as identity (bad over approximation)
-            # ubs_box.append(layer(ubs_box[-1]))
-            # lbs_box.append(layer(lbs_box[-1]))
-            pass
+            lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
+            curr_alphas = layer.negative_slope * torch.ones(lb.numel())
+            curr_alphas.requires_grad = True
+            neg_slopes = torch.cat((neg_slopes, layer.negative_slope * torch.ones(lb.numel())))
+            lb_rel, ub_rel = propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, neg_slope=layer.negative_slope, alpha=curr_alphas)
+            alphas = torch.cat((alphas, curr_alphas))
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
 
     # CHECK CONDITION
-
     lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
 
-    # #calculate the area of hte output box and print it
-    # print("area of output is",output_area(lb, ub))
-    #calculate the difference between lower bound of target and max upper bound of other classes and print it
-    print("difference between lower bound of target and max upper bound of other classes is",output_diff_lb2ub(lb, ub, true_label))
+    # GRADIENT DESCENT
+    optimizer.zero_grad()  # Zero the gradients
+    loss = -output_diff_lb2ub(lb, ub, true_label) + ub.max()
+    loss.backward()  # Compute the gradients
+    # print first 10 gradients
+    print("alphas.grad: ", alphas.grad[:10])
+
+    assert False
+
+    optimizer.step()  # Update x
+
+    print("dDiff target_lb, ub: ",output_diff_lb2ub(lb, ub, true_label))
     ub[true_label] = -float("inf")
     return lb[true_label] > ub.max()
-
-    # init_lb = init_lb.flatten()
-    # init_ub = init_ub.flatten()
-
-    # # at the end ub_rel is always of shape (10, num_symbols + 1)
-    # # for mnist (10, 785)
-
-    # # w_1 x_1 + ... + w_784 x_784 + b
-    # # f(alpha_1, alpha_2, ...)
-    # # 10 output classes
-    # # target class: lowerbound > upperbound of other classes
-    # # target: lower bound maximieren
-    # # other: upper bound minimieren
-
-    # ub_out = torch.zeros(ub_rel.shape[0])
-    # lb_out = torch.zeros(ub_rel.shape[0])
-    # # given input matrix and input bounds compute output bounds
-    # for i in range(ub_rel.shape[0]):
-    #     row = ub_rel[i,:-1]
-    #     b = ub_rel[i,-1]
-    #     ub_temp = init_ub.detach().clone()
-    #     ub_temp[row < 0] = init_lb[row < 0]
-    #     lb_temp = init_lb.detach().clone()
-    #     lb_temp[row < 0] = init_ub[row < 0]
-    #     ub_out[i] = row @ ub_temp + b
-    #     lb_out[i] = row @ lb_temp + b
-
-    # # check post-condition
-    # ub_out[true_label] = -float("inf")
-    # return lb_out[true_label] > ub_out.max()
 
 
 def main():
