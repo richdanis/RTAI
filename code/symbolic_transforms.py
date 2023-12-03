@@ -276,7 +276,7 @@ def propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, alpha):
 
         return lb_res, ub_res
 
-def propagate_leakyReLU_rel(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
+def propagate_leakyReLU_rel_not_good(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
         
         
         lb_rel_bef = lb_rel.clone()
