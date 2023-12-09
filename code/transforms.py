@@ -33,22 +33,6 @@ def transform_linear(lb_rel, ub_rel, weight, bias):
                ub_res[i] = ub_temp
         return lb_res, ub_res
 
-def matrix_matrix_mul_symbolic(inputs, weight, bias):
-        """
-        Propagate an abstract box through a matrix multiplication.
-        """
-        res = torch.zeros(weight.shape[0], inputs.shape[1], inputs.shape[2])
-        for i in range(weight.shape[0]):
-                weight_row = weight[i,:].unsqueeze(1)
-                for j in range(inputs.shape[1]):
-                        # multiply each column of weight matrix with each row of inputs
-                        temp =  weight_row* inputs[:,j,:]
-                        # sum over rows
-                        temp = temp.sum(dim=0)
-                        temp[-1] = temp[-1] + bias[i]
-                        res[i,j] = temp
-        return res
-
 def matrix_matrix_mul_rel(lb_rel, ub_rel, weight, bias):
         """
         Propagate an abstract box through a matrix multiplication.
@@ -139,6 +123,8 @@ def transform_conv2d(lb_rel, ub_rel, conv: nn.Conv2d):
         return lb_res, ub_res
 
 def transform_ReLU(lb_rel, ub_rel, lb, ub):
+
+        in_shape = lb_rel.shape
         upper_slope = ub / (ub - lb)
 
         ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
@@ -155,8 +141,8 @@ def transform_ReLU(lb_rel, ub_rel, lb, ub):
 
         lb_rel[lb < 0,:] = 0
 
-        lb_rel = lb_rel.view(ub_rel.shape)
-        ub_rel = ub_rel.view(ub_rel.shape)
+        lb_rel = lb_rel.view(in_shape)
+        ub_rel = ub_rel.view(in_shape)
 
         return lb_rel, ub_rel
 
@@ -193,81 +179,8 @@ def transform_ReLU_alpha(lb_rel, ub_rel, lb, ub, alpha):
 
         return lb_res, ub_res
 
-def transform_leakyReLU_not_good(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
-        
-        
-        lb_rel_bef = lb_rel.clone()
-        ub_rel_bef = ub_rel.clone()
-        s = slope
-        
-        if (slope <=1):
-                upper_slope = (ub - s*lb) / (ub - lb)
-                #lower_slope = torch.ones_like(upper_slope)
 
-                ub = ub.unsqueeze_(-1)
-                lb = lb.unsqueeze_(-1)
-                upper_slope = upper_slope.unsqueeze_(-1)
-                #lower_slope = lower_slope.unsqueeze_(-1)
-
-                ub_rel = upper_slope * ub_rel + lb*(s - upper_slope)
-
-                lb_rel = alpha * lb_rel.clone()
-
-                # flatten ub, ub_rel
-                ub = ub.flatten(start_dim=0)
-                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-
-                ub_rel[ub < 0,:] = s*ub_rel_bef[ub < 0,:].clone()
-                #lb_rel[ub < 0,:] = s*lb_rel_bef[ub < 0,:].clone()
-
-                # flatten lb, lb_rel
-                lb = lb.flatten(start_dim=0)
-                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-
-                #lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
-                lb_rel[lb > 0,:] = lb_rel_bef[lb > 0,:].clone()
-                #ub_rel[lb > 0,:] = ub_rel_bef[lb > 0,:].clone()
-
-                lb_rel = lb_rel.view(lb_rel.shape)
-                ub_rel = ub_rel.view(ub_rel.shape)
-
-                return lb_rel, ub_rel
-
-        elif (slope> 1):
-                upper_slope = (ub - lb)/ub
-                lower_slope = (ub - lb*s)/(ub - lb)
-                ub = ub.unsqueeze_(-1)
-                lb = lb.unsqueeze_(-1)
-                upper_slope = upper_slope.unsqueeze_(-1)
-                lower_slope = lower_slope.unsqueeze_(-1)
-
-                ub_rel = upper_slope * ub_rel - lb*upper_slope
-
-                lb_rel = lower_slope * lb_rel + lb*(s - lower_slope)
-
-                # flatten ub, ub_rel
-                ub = ub.flatten(start_dim=0)
-                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-
-                ub_rel[ub < 0,:] = s* ub_rel_bef[ub < 0,:].clone()
-                lb_rel[ub < 0,:] = s* lb_rel_bef[ub < 0,:].clone()
-
-
-                # flatten lb, lb_rel
-                lb = lb.flatten(start_dim=0)
-                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-
-                #lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
-                lb_rel[lb > 0,:] = lb_rel_bef[lb > 0,:].clone()
-                ub_rel[lb > 0,:] = ub_rel_bef[lb > 0,:].clone()
-
-                lb_rel = lb_rel.view(lb_rel.shape)
-                ub_rel = ub_rel.view(ub_rel.shape)
-
-                return lb_rel, ub_rel
-
-
-def transform_leakyReLU_alpha(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
+def transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
         lb_rel_bef = lb_rel.clone()
         ub_rel_bef = ub_rel.clone()
         lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
