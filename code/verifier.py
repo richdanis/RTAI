@@ -6,7 +6,7 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from code.transforms import *
+from transforms import *
 
 DEVICE = "cpu"
 
@@ -24,6 +24,8 @@ def analyze(
     # input shape:
     # mnist (1, 28, 28) -> x_1 , ..., x_784
     # cifar10 (3, 32, 32) -> 1_1, ... , x_3072
+
+    print(net)
 
     # set weights to no_grad:
     for param in net.parameters():
@@ -57,27 +59,32 @@ def analyze(
                 ub_rel = torch.flatten(ub_rel, start_dim=0, end_dim=-2)
                 lb_rel = torch.flatten(lb_rel, start_dim=0, end_dim=-2)
             elif isinstance(layer, nn.Linear):
-                lb_rel, ub_rel = propagate_linear_rel(lb_rel, ub_rel, layer.weight, layer.bias)
+                lb_rel, ub_rel = transform_linear(lb_rel, ub_rel, layer.weight, layer.bias)
             elif isinstance(layer, nn.Conv2d):
-                lb_rel, ub_rel = propagate_conv2d_rel(lb_rel, ub_rel, layer)
+                lb_rel, ub_rel = transform_conv2d(lb_rel, ub_rel, layer)
             elif isinstance(layer, nn.ReLU):
-                lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
-                neg_slopes = torch.cat((neg_slopes, torch.zeros(lb.numel())))
-                if alphas is None:
-                    alphas = 1.0 * torch.ones(lb.numel(), requires_grad=True)
-                elif first_pass:
-                    alphas = torch.cat((alphas, 1.0 * torch.ones(lb.numel(), requires_grad=True)))
-                lb_rel, ub_rel = propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, alpha=alphas[c:c+lb.numel()])
-                c += lb.numel()
+                in_shape = lb_rel.shape
+                # lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
+                # neg_slopes = torch.cat((neg_slopes, torch.zeros(lb.numel())))
+                # if alphas is None:
+                #     alphas = 1.0 * torch.ones(lb.numel(), requires_grad=True)
+                # elif first_pass:
+                #     alphas = torch.cat((alphas, 1.0 * torch.ones(lb.numel(), requires_grad=True)))
+                # lb_rel, ub_rel = propagate_ReLU_rel_alpha(lb_rel, ub_rel, lb, ub, alpha=alphas[c:c+lb.numel()])
+                # c += lb.numel()
+                # approximate as identity
+                assert in_shape == lb_rel.shape
             elif isinstance(layer, nn.LeakyReLU):
+                in_shape = lb_rel.shape
                 lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
                 # if alphas is None:
                 #     alphas = layer.negative_slope * torch.ones(lb.numel(), requires_grad=True)
                 # elif first_pass:
                 #     alphas = torch.cat((alphas, layer.negative_slope * torch.ones(lb.numel(), requires_grad=True)))
                 neg_slopes = torch.cat((neg_slopes, layer.negative_slope * torch.ones(lb.numel())))
-                lb_rel, ub_rel = propagate_leakyReLU_rel(lb_rel, ub_rel, lb, ub, slope=layer.negative_slope)
+                lb_rel, ub_rel = transform_leakyReLU_alpha(lb_rel, ub_rel, lb, ub, slope=layer.negative_slope)
                 # c += lb.numel()
+                assert in_shape == lb_rel.shape
             else:
                 raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
 
