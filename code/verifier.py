@@ -55,45 +55,58 @@ def analyze(
         elif isinstance(layer, nn.ReLU):
             in_shape = lb_rel.shape
             lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
+            assert torch.all(lb <= ub)
             lb_rel, ub_rel = transform_ReLU(lb_rel, ub_rel, lb, ub)
             assert in_shape == lb_rel.shape
         elif isinstance(layer, nn.LeakyReLU):
             in_shape = lb_rel.shape
             lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
+            assert torch.all(lb <= ub)
             lb_rel, ub_rel = transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope=layer.negative_slope)
             assert in_shape == lb_rel.shape
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
+        
+    #checck verification old school
+    lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
+    lb_true = lb[true_label]
+    ub[true_label] = -float("inf")
+    print("differece between lb and max ub of other classes: ", float(lb_true - ub.max()))
+    return int((lb_true >= ub.max()))
 
-    # CHECK VERIFICATION
-    init_lb = torch.flatten(init_lb)
-    init_ub = torch.flatten(init_ub)
+    # # CHECK VERIFICATION
+    # init_lb = torch.flatten(init_lb)
+    # init_ub = torch.flatten(init_ub)
 
-    differences = torch.empty((0, lb_rel.shape[-1]))
-    for i in range(10):
-        if i == true_label:
-            continue
-        curr_diff = lb_rel[true_label] - ub_rel[i]
-        curr_diff = curr_diff.unsqueeze(0)
-        differences = torch.cat((differences, curr_diff), dim=0)
 
-    assert differences.shape[0] == 9
+    # differences = torch.empty((0, lb_rel.shape[-1]))
+    # for i in range(10):
+    #     if i == true_label:
+    #         continue
+    #     curr_diff = lb_rel[true_label] - ub_rel[i]
+    #     curr_diff = curr_diff.unsqueeze(0)
+    #     differences = torch.cat((differences, curr_diff), dim=0)
 
-    # lower bounds of differences must be positive
-    numerical_diff = torch.empty((0,))
-    for i in range(9):
-        lb_temp = init_lb.clone()
-        row = differences[i]
-        bias = row[-1]
-        row = row[:-1]
+    # assert differences.shape[0] == 9
 
-        lb_temp[row < 0] = init_ub[row < 0]
+    # # lower bounds of differences must be positive
+    # numerical_diff = torch.empty((0,))
+    # for i in range(9):
+    #     lb_temp = init_lb.clone()
+    #     row = differences[i]
+    #     bias = row[-1]
+    #     row = row[:-1]
 
-        diff_num = torch.sum(row * lb_temp) + bias
+    #     lb_temp[row < 0] = init_ub[row < 0]
 
-        numerical_diff = torch.cat((numerical_diff, diff_num.unsqueeze(0)), dim=0)
+    #     diff_num = torch.sum(row * lb_temp) + bias
+
+    #     numerical_diff = torch.cat((numerical_diff, diff_num.unsqueeze(0)), dim=0)
+
+    # print("differece between lb and max ub of other classes: ", numerical_diff.min())
+
     
-    return int(numerical_diff.min() >= 0)
+    # return int(numerical_diff.min() >= 0)
 
 
 def main():

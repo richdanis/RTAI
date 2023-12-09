@@ -123,26 +123,48 @@ def transform_conv2d(lb_rel, ub_rel, conv: nn.Conv2d):
         return lb_res, ub_res
 
 def transform_ReLU(lb_rel, ub_rel, lb, ub):
+        """
+        Propagate relational bounds through a ReLU layer.
+        lb_rel  and ub_rel of shape = ([50, 785]) (batch_size, number_of_symbols + 1)
+        lb and ub of shape = ([50]) (batch_size)
 
+        """
+        lb_rel_before = lb_rel.clone()
+        ub_rel_before = ub_rel.clone()
         in_shape = lb_rel.shape
+        in_shape_lb = lb.shape
+        #check that lb and lb_rel have same batch size
+        assert(in_shape[0]== in_shape_lb[0])
+        #asssert that lb is smaller than ub
+        assert(torch.all(lb <= ub))
+
         upper_slope = ub / (ub - lb)
 
-        ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
+        #set the etnries of upper_slope that are negative to zero
+        upper_slope = upper_slope.clamp_min(0)
 
-        # flatten ub, ub_rel
-        ub = ub.flatten(start_dim=0)
-        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+
+        ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
+        lb_rel = torch.zeros_like(lb_rel)
+
+
+
+        # flatten ub, ub_rel --> Dont need to flatten it!
+        #ub = ub.flatten(start_dim=0)
+        #ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
 
         ub_rel[ub < 0,:] = 0
+        lb_rel[ub < 0,:] = 0
 
         # flatten lb, lb_rel
-        lb = lb.flatten(start_dim=0)
-        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+        #lb = lb.flatten(start_dim=0)
+        #lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
 
-        lb_rel[lb < 0,:] = 0
+        lb_rel[lb >= 0,:] = lb_rel_before[lb >= 0,:]
+        ub_rel[lb >= 0,:] = ub_rel_before[lb >= 0,:]
 
-        lb_rel = lb_rel.view(in_shape)
-        ub_rel = ub_rel.view(in_shape)
+        #lb_rel = lb_rel.view(in_shape)
+        #ub_rel = ub_rel.view(in_shape)
 
         return lb_rel, ub_rel
 
@@ -264,7 +286,7 @@ def transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
 def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
 
         # init_lb: (1, 28, 28) or (3, 32, 32)
-
+        
         init_lb = init_lb.flatten()
         init_ub = init_ub.flatten()
 
@@ -300,7 +322,9 @@ def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
 
                 lb_res[i] = lb_temp @ init_lb_temp + lb_b
 
-        lb_res = lb_res.view(out_shape)
-        ub_res = ub_res.view(out_shape)
+        #view thign not necessary, would hide an error if it was there
+        
+        #lb_res = lb_res.view(out_shape)
+        #ub_res = ub_res.view(out_shape)
 
         return lb_res, ub_res
