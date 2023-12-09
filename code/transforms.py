@@ -6,8 +6,8 @@ def transform_linear(lb_rel, ub_rel, weight, bias):
         """
         Propagate relational bounds through a linear layer.
         """
-        lb_res = torch.empty(weight.shape[0], lb_rel.shape[1])
-        ub_res = torch.empty(weight.shape[0], lb_rel.shape[1])
+        lb_res = torch.empty(weight.shape[0], lb_rel.shape[-1])
+        ub_res = torch.empty(weight.shape[0], lb_rel.shape[-1])
         for i in range(weight.shape[0]):
 
                row = weight[i,:]
@@ -31,6 +31,7 @@ def transform_linear(lb_rel, ub_rel, weight, bias):
 
                lb_res[i] = lb_temp
                ub_res[i] = ub_temp
+               
         return lb_res, ub_res
 
 def matrix_matrix_mul_rel(lb_rel, ub_rel, weight, bias):
@@ -140,33 +141,30 @@ def transform_ReLU(lb_rel, ub_rel, lb, ub):
 
         upper_slope = ub / (ub - lb)
 
-        #set the etnries of upper_slope that are negative to zero
-        upper_slope = upper_slope.clamp_min(0)
+        ub_res = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
 
-
-        ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
-        lb_rel = torch.zeros_like(lb_rel)
-
-
-
-        # flatten ub, ub_rel --> Dont need to flatten it!
-        #ub = ub.flatten(start_dim=0)
-        #ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-
-        ub_rel[ub < 0,:] = 0
-        lb_rel[ub < 0,:] = 0
+        # flatten ub, ub_rel
+        ub = ub.flatten(start_dim=0)
+        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+        ub_res = ub_res.flatten(start_dim=0, end_dim=-2)
 
         # flatten lb, lb_rel
-        #lb = lb.flatten(start_dim=0)
-        #lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+        lb = lb.flatten(start_dim=0)
+        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+        lb_res = lb_rel.flatten(start_dim=0, end_dim=-2)
 
-        lb_rel[lb >= 0,:] = lb_rel_before[lb >= 0,:]
-        ub_rel[lb >= 0,:] = ub_rel_before[lb >= 0,:]
+        lb_res[:,:] = 0
 
-        #lb_rel = lb_rel.view(in_shape)
-        #ub_rel = ub_rel.view(in_shape)
+        lb_res[ub < 0,:] = 0
+        ub_res[ub < 0,:] = 0
 
-        return lb_rel, ub_rel
+        ub_res[lb > 0,:] = ub_rel[lb > 0,:]
+        lb_res[lb > 0,:] = lb_rel[lb > 0,:]
+
+        lb_res = lb_res.view(in_shape)
+        ub_res = ub_res.view(in_shape)
+
+        return lb_res, ub_res
 
 def transform_ReLU_alpha(lb_rel, ub_rel, lb, ub, alpha):
 
@@ -203,85 +201,82 @@ def transform_ReLU_alpha(lb_rel, ub_rel, lb, ub, alpha):
 
 
 def transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
-        lb_rel_bef = lb_rel.clone()
-        ub_rel_bef = ub_rel.clone()
-        lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
-        ub_rel_bef = ub_rel_bef.flatten(start_dim=0, end_dim=-2)
-        s = slope
 
+        in_shape = lb_rel.shape
 
+        if slope == 1.0:
 
+                return lb_rel, ub_rel
         
-        if (slope <=1.0):
-                upper_slope = (ub - s*lb) / (ub - lb)
-                ub = ub.unsqueeze_(-1)
-                lb = lb.unsqueeze_(-1)
-                upper_slope = upper_slope.unsqueeze_(-1)
-                #lower_slope = lower_slope.unsqueeze_(-1)
+        elif slope < 1.0:
 
-                #lower_slope = torch.ones_like(upper_slope)
+                # compute upper slope and offset
+                upper_slope = (ub - slope*lb) / (ub - lb)
+                upper_slope = upper_slope.unsqueeze(-1)
 
+                offset = ub * lb * (slope - 1) / (ub - lb)
+                offset = offset.flatten(start_dim=0)
 
-                #lower_slope = lower_slope.unsqueeze_(-1)
+                # default upper and lower bound
+                # maybe add offset only to constant?!
+                ub_res = upper_slope * ub_rel
+                lb_res = slope * lb_rel
 
-                ub_rel = upper_slope * ub_rel + lb*(s - upper_slope)
+                # flatten
+                ub = ub.flatten(start_dim=0)
+                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+                ub_res = ub_res.flatten(start_dim=0, end_dim=-2)
 
-                lb_rel = alpha * lb_rel.clone()
+                lb = lb.flatten(start_dim=0)
+                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+                lb_res = lb_res.flatten(start_dim=0, end_dim=-2)
 
+                # add offset
+                ub_res[:,-1] = ub_res[:,-1] + offset
+                
+                # when not crossing
+                ub_res[ub < 0,:] = slope * ub_rel[ub < 0,:]
+                lb_res[ub < 0,:] = slope * lb_rel[ub < 0,:]
+
+                lb_res[lb > 0,:] = lb_rel[lb > 0,:]
+                ub_res[lb > 0,:] = ub_rel[lb > 0,:]
                 
 
-                # flatten ub, ub_rel
+                return lb_res.view(in_shape), ub_res.view(in_shape)
+
+        elif slope > 1.0:
+
+                # compute upper slope and offset
+                lower_slope = (ub - slope*lb) / (ub - lb)
+                lower_slope = lower_slope.unsqueeze(-1)
+
+                offset = ub * lb * (slope - 1) / (ub - lb)
+                offset = offset.flatten(start_dim=0)
+                
+                # default upper and lower bound
+                ub_res = slope * ub_rel
+                lb_res = lower_slope * lb_rel
+
+                # flatten
                 ub = ub.flatten(start_dim=0)
                 ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+                ub_res = ub_res.flatten(start_dim=0, end_dim=-2)
 
-                ub_rel[ub < 0,:] = s*ub_rel_bef[ub < 0,:].clone()
-                #lb_rel[ub < 0,:] = s*lb_rel_bef[ub < 0,:].clone()
-
-                # flatten lb, lb_rel
                 lb = lb.flatten(start_dim=0)
                 lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
+                lb_res = lb_res.flatten(start_dim=0, end_dim=-2)
 
-                #lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
-                lb_rel[lb > 0,:] = lb_rel_bef[lb > 0,:].clone()
-                #ub_rel[lb > 0,:] = ub_rel_bef[lb > 0,:].clone()
+                # add offset
+                lb_res[:,-1] = lb_res[:,-1] + offset
+                
+                # when not crossing
+                ub_res[ub < 0,:] = slope * ub_rel[ub < 0,:]
+                lb_res[ub < 0,:] = slope * lb_rel[ub < 0,:]
 
-                lb_rel = lb_rel.view(lb_rel.shape)
-                ub_rel = ub_rel.view(ub_rel.shape)
+                lb_res[lb > 0,:] = lb_rel[lb > 0,:]
+                ub_res[lb > 0,:] = ub_rel[lb > 0,:]
 
-                return lb_rel, ub_rel
-
-        elif (slope> 1.0):
-                upper_slope = (ub - lb)/ub
-                lower_slope = (ub - lb*s)/(ub - lb)
-                ub = ub.unsqueeze_(-1)
-                lb = lb.unsqueeze_(-1)
-                upper_slope = upper_slope.unsqueeze_(-1)
-                lower_slope = lower_slope.unsqueeze_(-1)
-
-                ub_rel = upper_slope * ub_rel - lb*upper_slope
-
-                lb_rel = lower_slope * lb_rel + lb*(s - lower_slope)
-
-                # flatten ub, ub_rel
-                ub = ub.flatten(start_dim=0)
-                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-
-                ub_rel[ub < 0,:] = s* ub_rel_bef[ub < 0,:].clone()
-                lb_rel[ub < 0,:] = s* lb_rel_bef[ub < 0,:].clone()
-
-
-                # flatten lb, lb_rel
-                lb = lb.flatten(start_dim=0)
-                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-
-                #lb_rel_bef = lb_rel_bef.flatten(start_dim=0, end_dim=-2)
-                lb_rel[lb > 0,:] = lb_rel_bef[lb > 0,:].clone()
-                ub_rel[lb > 0,:] = ub_rel_bef[lb > 0,:].clone()
-
-                lb_rel = lb_rel.view(lb_rel.shape)
-                ub_rel = ub_rel.view(ub_rel.shape)
-
-                return lb_rel, ub_rel
+                return lb_res.view(in_shape), ub_res.view(in_shape)
 
 def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
 
@@ -328,3 +323,35 @@ def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
         #ub_res = ub_res.view(out_shape)
 
         return lb_res, ub_res
+
+def check_postcondition(init_lb, init_ub, lb_rel, ub_rel, true_label):
+        init_lb = torch.flatten(init_lb)
+        init_ub = torch.flatten(init_ub)
+
+        differences = torch.empty((0, lb_rel.shape[-1]))
+        for i in range(10):
+                if i == true_label:
+                        continue
+                curr_diff = lb_rel[true_label] - ub_rel[i]
+                curr_diff = curr_diff.unsqueeze(0)
+                differences = torch.cat((differences, curr_diff), dim=0)
+
+        assert differences.shape[0] == 9
+
+        # lower bounds of differences must be positive
+        numerical_diff = torch.empty((0,))
+        for i in range(9):
+                lb_temp = init_lb.clone()
+                row = differences[i]
+                bias = row[-1]
+                row = row[:-1]
+
+                lb_temp[row < 0] = init_ub[row < 0]
+
+                diff_num = torch.sum(row * lb_temp) + bias
+
+                numerical_diff = torch.cat((numerical_diff, diff_num.unsqueeze(0)), dim=0)
+
+        #print(numerical_diff)
+        
+        return int(numerical_diff.min() >= 0)

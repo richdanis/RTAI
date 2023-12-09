@@ -1,0 +1,13 @@
+#!/bin/bash
+
+while IFS="" read -r p || [ -n "$p" ]
+do
+  # split the line into an array
+  IFS=',' read -r -a array <<< "$p"
+  # assign first element to net
+  net=${array[0]}
+  case=${array[1]}
+  label=${array[2]}
+  echo ${net} ${case} ${label}
+  python code/verifier.py --net ${net} --spec test_cases/${net}/${case}  
+done < test_cases/gt.txt

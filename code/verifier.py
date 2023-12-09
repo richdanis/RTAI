@@ -10,13 +10,6 @@ from transforms import *
 
 DEVICE = "cpu"
 
-
-def output_diff_lb2ub(lb, ub, tue_label):
-    "return difference between lower bound of target and max upper bound of other classes"
-    ub[tue_label] = -float("inf")
-    return float(lb[tue_label] - ub.max())
-
-
 def analyze(
     net: torch.nn.Module, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
@@ -26,6 +19,8 @@ def analyze(
     # cifar10 (3, 32, 32) -> 1_1, ... , x_3072
 
     # SETUP
+
+    # print(net)
 
     # set weights to no_grad:
     for param in net.parameters():
@@ -61,7 +56,7 @@ def analyze(
         elif isinstance(layer, nn.LeakyReLU):
             in_shape = lb_rel.shape
             lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
-            assert torch.all(lb <= ub)
+            assert (lb > ub).sum() == 0
             lb_rel, ub_rel = transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope=layer.negative_slope)
             assert in_shape == lb_rel.shape
         else:
@@ -74,39 +69,8 @@ def analyze(
     print("differece between lb and max ub of other classes: ", float(lb_true - ub.max()))
     return int((lb_true >= ub.max()))
 
-    # # CHECK VERIFICATION
-    # init_lb = torch.flatten(init_lb)
-    # init_ub = torch.flatten(init_ub)
-
-
-    # differences = torch.empty((0, lb_rel.shape[-1]))
-    # for i in range(10):
-    #     if i == true_label:
-    #         continue
-    #     curr_diff = lb_rel[true_label] - ub_rel[i]
-    #     curr_diff = curr_diff.unsqueeze(0)
-    #     differences = torch.cat((differences, curr_diff), dim=0)
-
-    # assert differences.shape[0] == 9
-
-    # # lower bounds of differences must be positive
-    # numerical_diff = torch.empty((0,))
-    # for i in range(9):
-    #     lb_temp = init_lb.clone()
-    #     row = differences[i]
-    #     bias = row[-1]
-    #     row = row[:-1]
-
-    #     lb_temp[row < 0] = init_ub[row < 0]
-
-    #     diff_num = torch.sum(row * lb_temp) + bias
-
-    #     numerical_diff = torch.cat((numerical_diff, diff_num.unsqueeze(0)), dim=0)
-
-    # print("differece between lb and max ub of other classes: ", numerical_diff.min())
-
-    
-    # return int(numerical_diff.min() >= 0)
+    # CHECK VERIFICATION
+    return check_postcondition(init_lb, init_ub, lb_rel, ub_rel, true_label)
 
 
 def main():
