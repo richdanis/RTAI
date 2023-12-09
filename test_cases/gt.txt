@@ -9,21 +9,45 @@ fc_base,img2_mnist_0.0784.txt,verified
 fc_base,img3_mnist_0.0126.txt,verified
 fc_base,img4_mnist_0.0369.txt,verified
 fc_1,img0_mnist_0.1394.txt,not verified
+fc_1,img1_mnist_0.0373.txt,not verified
 fc_1,img2_mnist_0.0692.txt,verified
+fc_1,img6_mnist_0.0419.txt,verified
+fc_1,img7_mnist_0.0915.txt,verified
 fc_2,img0_mnist_0.1086.txt,not verified
+fc_2,img2_mnist_0.0908.txt,not verified
 fc_2,img3_mnist_0.0639.txt,verified
+fc_2,img7_mnist_0.0843.txt,verified
+fc_2,img8_mnist_0.0750.txt,verified
 fc_3,img0_mnist_0.1016.txt,not verified
+fc_3,img2_mnist_0.0615.txt,not verified
+fc_3,img3_mnist_0.0019.txt,verified
 fc_3,img4_mnist_0.0780.txt,verified
+fc_3,img8_mnist_0.0751.txt,verified
+fc_4,img0_mnist_0.1132.txt,not verified
 fc_4,img0_mnist_0.2096.txt,not verified
+fc_4,img3_mnist_0.0014.txt,verified
 fc_4,img4_mnist_0.0554.txt,verified
+fc_4,img4_mnist_0.0552.txt,verified
 fc_5,img0_mnist_0.2663.txt,not verified
+fc_5,img2_mnist_0.1475.txt,not verified
 fc_5,img4_mnist_0.1197.txt,verified
+fc_5,img7_mnist_0.1009.txt,verified
+fc_5,img8_mnist_0.1020.txt,verified
 fc_6,img0_mnist_0.0495.txt,not verified
 fc_6,img3_mnist_0.0364.txt,verified
 fc_6,img0_cifar10_0.0128.txt,not verified
 fc_6,img2_cifar10_0.0025.txt,verified
+fc_6,img2_mnist_0.0386.txt,not verified
+fc_6,img4_mnist_0.0619.txt,verified
+fc_6,img8_mnist_0.0316.txt,verified
+fc_6,img2_cifar10_0.0029.txt,not verified
+fc_6,img3_cifar10_0.0051.txt,not verified
+fc_6,img8_cifar10_0.0029.txt,verified
 fc_7,img0_mnist_0.1497.txt,not verified
 fc_7,img4_mnist_0.0928.txt,verified
+fc_7,img0_mnist_0.0598.txt,not verified
+fc_7,img3_mnist_0.0700.txt,verified
+fc_7,img7_mnist_0.0521.txt,verified
 conv_1,img0_mnist_0.2302.txt,not verified
 conv_1,img4_mnist_0.1241.txt,verified
 conv_2,img0_mnist_0.1872.txt,not verified
