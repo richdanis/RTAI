@@ -11,7 +11,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": ["--net", "fc_6", "--spec", "preliminary_evaluation_test_cases/fc_6/img2_cifar10_0.0029.txt"]
+            "args": ["--net", "conv_base", "--spec", "test_cases/conv_base/img0_mnist_0.0707.txt"]
         }
     ]
 }

@@ -61,16 +61,10 @@ def analyze(
             assert in_shape == lb_rel.shape
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
-        
-    #checck verification old school
-    lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
-    lb_true = lb[true_label]
-    ub[true_label] = -float("inf")
-    print("differece between lb and max ub of other classes: ", float(lb_true - ub.max()))
-    return int((lb_true >= ub.max()))
 
     # CHECK VERIFICATION
-    return check_postcondition(init_lb, init_ub, lb_rel, ub_rel, true_label)
+    diffs = differences(init_lb, init_ub, lb_rel, ub_rel, true_label)
+    return int(diffs.min() >= 0)
 
 
 def main():

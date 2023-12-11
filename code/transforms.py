@@ -1,67 +1,38 @@
 import torch
 import torch.nn as nn
 
-
 def transform_linear(lb_rel, ub_rel, weight, bias):
         """
         Propagate relational bounds through a linear layer.
         """
-        lb_res = torch.empty(weight.shape[0], lb_rel.shape[-1])
-        ub_res = torch.empty(weight.shape[0], lb_rel.shape[-1])
-        for i in range(weight.shape[0]):
+        neg_weights = torch.where(weight < 0, weight, torch.zeros_like(weight))
+        pos_weights = torch.where(weight > 0, weight, torch.zeros_like(weight))
+                                  
+        lb_res = pos_weights @ lb_rel + neg_weights @ ub_rel
+        ub_res = pos_weights @ ub_rel + neg_weights @ lb_rel
 
-               row = weight[i,:]
+        lb_res[:, -1] = lb_res[:, -1] + bias
+        ub_res[:, -1] = ub_res[:, -1] + bias
 
-               lb_temp = lb_rel.clone()
-               ub_temp = ub_rel.clone()
-
-               lb_temp[row < 0,:] = ub_rel[row < 0,:]
-               ub_temp[row < 0,:] = lb_rel[row < 0,:]
-
-               row = row.unsqueeze(1)
-
-               lb_temp = row * lb_temp
-               ub_temp = row * ub_temp
-
-               lb_temp = lb_temp.sum(dim=0)
-               ub_temp = ub_temp.sum(dim=0)
-
-               lb_temp[-1] = lb_temp[-1] + bias[i]
-               ub_temp[-1] = ub_temp[-1] + bias[i]
-
-               lb_res[i] = lb_temp
-               ub_res[i] = ub_temp
-               
         return lb_res, ub_res
 
 def matrix_matrix_mul_rel(lb_rel, ub_rel, weight, bias):
-        """
-        Propagate an abstract box through a matrix multiplication.
-        """
-        lb_res = torch.empty(weight.shape[0], lb_rel.shape[1], lb_rel.shape[2])
-        ub_res = torch.empty(weight.shape[0], lb_rel.shape[1], lb_rel.shape[2])
-        for i in range(weight.shape[0]):
-                row = weight[i,:]
-                for j in range(lb_rel.shape[1]):
-                        # multiply each column of weight matrix with each row of inputs
-                        lb_temp = lb_rel[:,j,:].clone()
-                        ub_temp = ub_rel[:,j,:].clone()
+    """
+    Propagate an abstract box through a matrix multiplication.
+    """
+    # Separate positive and negative parts of the weight
+    weight_pos = torch.where(weight > 0, weight, torch.zeros_like(weight))
+    weight_neg = torch.where(weight < 0, weight, torch.zeros_like(weight))
 
-                        lb_temp[row < 0,:] = ub_temp[row < 0,:]
-                        ub_temp[row < 0,:] = lb_rel[:,j,:][row < 0,:]
+    # Compute lower bound result
+    lb_res = torch.einsum('ij,jak->iak', weight_neg, ub_rel) + torch.einsum('ij,jak->iak', weight_pos, lb_rel)
+    lb_res[..., -1] += bias.unsqueeze(1)
 
-                        lb_temp = row.unsqueeze(1) * lb_temp
-                        ub_temp = row.unsqueeze(1) * ub_temp
+    # Compute upper bound result
+    ub_res = torch.einsum('ij,jak->iak', weight_neg, lb_rel) + torch.einsum('ij,jak->iak', weight_pos, ub_rel)
+    ub_res[..., -1] += bias.unsqueeze(1)
 
-                        lb_temp = lb_temp.sum(dim=0)
-                        ub_temp = ub_temp.sum(dim=0)
-                        # sum over rows
-                        lb_temp[-1] = lb_temp[-1] + bias[i]
-                        ub_temp[-1] = ub_temp[-1] + bias[i]
-                        #
-                        lb_res[i,j] = lb_temp
-                        ub_res[i,j] = ub_temp
-        return lb_res, ub_res
+    return lb_res, ub_res
 
 def transform_conv2d(lb_rel, ub_rel, conv: nn.Conv2d):
         """
@@ -89,22 +60,14 @@ def transform_conv2d(lb_rel, ub_rel, conv: nn.Conv2d):
         # unfold index array
         ind = torch.nn.functional.unfold(ind, (kernel_size, kernel_size), stride=stride, padding=padding)
         # change to int
-        ind = ind.int()
+        ind = ind.long()
 
-        # flatten input
         lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
         ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
 
-        assert len(ind.shape) == 2
-        # ind is now of shape (in_channels * kernel_size * kernel_size, num_patches)
-        # unfold input
-
-        lb_unfold = torch.empty(ind.shape + (lb_rel.shape[-1],))
-        ub_unfold = torch.empty(ind.shape + (ub_rel.shape[-1],))
-        for i in range(ind.shape[0]):
-                for j in range(ind.shape[1]):
-                        lb_unfold[i, j] = lb_rel[ind[i, j]]
-                        ub_unfold[i, j] = ub_rel[ind[i, j]]
+        # flatten input
+        lb_unfold = lb_rel[ind]
+        ub_unfold = ub_rel[ind]
 
         # get weight and bias
         w = conv.weight
@@ -130,8 +93,6 @@ def transform_ReLU(lb_rel, ub_rel, lb, ub):
         lb and ub of shape = ([50]) (batch_size)
 
         """
-        lb_rel_before = lb_rel.clone()
-        ub_rel_before = ub_rel.clone()
         in_shape = lb_rel.shape
         in_shape_lb = lb.shape
         #check that lb and lb_rel have same batch size
@@ -140,8 +101,10 @@ def transform_ReLU(lb_rel, ub_rel, lb, ub):
         assert(torch.all(lb <= ub))
 
         upper_slope = ub / (ub - lb)
+        offset = upper_slope * lb
+        offset = offset.flatten()
 
-        ub_res = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
+        ub_res = upper_slope.unsqueeze(-1) * ub_rel
 
         # flatten ub, ub_rel
         ub = ub.flatten(start_dim=0)
@@ -152,6 +115,8 @@ def transform_ReLU(lb_rel, ub_rel, lb, ub):
         lb = lb.flatten(start_dim=0)
         lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
         lb_res = lb_rel.flatten(start_dim=0, end_dim=-2)
+
+        ub_res[:,-1] = ub_res[:,-1] - offset
 
         lb_res[:,:] = 0
 
@@ -168,34 +133,40 @@ def transform_ReLU(lb_rel, ub_rel, lb, ub):
 
 def transform_ReLU_alpha(lb_rel, ub_rel, lb, ub, alpha):
 
+        in_shape = lb_rel.shape
+        in_shape_lb = lb.shape
+        #check that lb and lb_rel have same batch size
+        assert(in_shape[0]== in_shape_lb[0])
+
         upper_slope = ub / (ub - lb)
 
-        ub_res = upper_slope.unsqueeze(-1) * (ub_rel.clone() - lb.unsqueeze(-1))
+        # offset!!!
+        offset = upper_slope * lb
+        offset = offset.flatten()
+        ub_res = upper_slope.unsqueeze(-1) * ub_rel
 
         # flatten ub, ub_rel
         ub = ub.flatten(start_dim=0)
+        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
         ub_res = ub_res.flatten(start_dim=0, end_dim=-2)
 
-        alpha = alpha.view(lb.shape).unsqueeze(-1)
-        
-        lb_res = alpha * lb_rel.clone()
         # flatten lb, lb_rel
         lb = lb.flatten(start_dim=0)
-        lb_res = lb_res.flatten(start_dim=0, end_dim=-2)
-
-        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
         lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-        
-        # to zero if ub < 0
-        ub_res[ub < 0,:] = 0
-        lb_res[ub < 0,:] = 0
+        lb_res = lb_rel.flatten(start_dim=0, end_dim=-2)
 
-        # don't change if lb > 0
+        ub_res[:,-1] = ub_res[:,-1] - offset
+        
+        lb_res = alpha.flatten().unsqueeze(1) * lb_rel
+
+        lb_res[ub < 0,:] = 0
+        ub_res[ub < 0,:] = 0
+
         ub_res[lb > 0,:] = ub_rel[lb > 0,:]
         lb_res[lb > 0,:] = lb_rel[lb > 0,:]
 
-        ub_res = ub_res.view(ub_rel.shape)
-        lb_res = lb_res.view(ub_rel.shape)
+        lb_res = lb_res.view(in_shape)
+        ub_res = ub_res.view(in_shape)
 
         return lb_res, ub_res
 
@@ -282,49 +253,30 @@ def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
 
         # init_lb: (1, 28, 28) or (3, 32, 32)
         
-        init_lb = init_lb.flatten()
-        init_ub = init_ub.flatten()
+        init_lb = init_lb.view((-1,))
+        init_ub = init_ub.view((-1,))
 
         out_shape = lb_rel.shape[:-1]
 
-        lb_rel = torch.flatten(lb_rel, start_dim=0, end_dim=-2)
-        ub_rel = torch.flatten(ub_rel, start_dim=0, end_dim=-2)
+        lb_rel = lb_rel.view((-1, lb_rel.shape[-1]))
+        ub_rel = ub_rel.view((-1, ub_rel.shape[-1]))
 
-        lb_res = torch.empty(lb_rel.shape[0])
-        ub_res = torch.empty(ub_rel.shape[0])
+        neg_lb = torch.where(lb_rel < 0, lb_rel, torch.zeros_like(lb_rel))
+        pos_lb = torch.where(lb_rel > 0, lb_rel, torch.zeros_like(lb_rel))
 
-        # given input matrix and input bounds compute output bounds
-        for i in range(ub_rel.shape[0]):
+        neg_ub = torch.where(ub_rel < 0, ub_rel, torch.zeros_like(ub_rel))
+        pos_ub = torch.where(ub_rel > 0, ub_rel, torch.zeros_like(ub_rel))
 
-                ub_temp = ub_rel[i,:-1].clone()
-                lb_temp = lb_rel[i,:-1].clone()
-                ub_b = ub_rel[i,-1].clone()
-                lb_b = lb_rel[i,-1].clone()
+        lb_res = neg_lb[:,:-1] @ init_ub + pos_lb[:,:-1] @ init_lb
+        ub_res = neg_ub[:,:-1] @ init_lb + pos_ub[:,:-1] @ init_ub
 
-                init_ub_temp = init_ub.clone()
-                init_lb_temp = init_lb.clone()
+        lb_res = lb_res + lb_rel[:,-1]
+        ub_res = ub_res + ub_rel[:,-1]
 
-                init_ub_temp[ub_temp < 0] = init_lb[ub_temp < 0]
-                init_lb_temp[ub_temp < 0] = init_ub[ub_temp < 0]
+        return lb_res.view(out_shape), ub_res.view(out_shape)
 
-                ub_res[i] = ub_temp @ init_ub_temp + ub_b
-
-                init_ub_temp = init_ub.clone()
-                init_lb_temp = init_lb.clone()
-
-                init_ub_temp[lb_temp < 0] = init_lb[lb_temp < 0]
-                init_lb_temp[lb_temp < 0] = init_ub[lb_temp < 0]
-
-                lb_res[i] = lb_temp @ init_lb_temp + lb_b
-
-        #view thign not necessary, would hide an error if it was there
+def differences(init_lb, init_ub, lb_rel, ub_rel, true_label):
         
-        #lb_res = lb_res.view(out_shape)
-        #ub_res = ub_res.view(out_shape)
-
-        return lb_res, ub_res
-
-def check_postcondition(init_lb, init_ub, lb_rel, ub_rel, true_label):
         init_lb = torch.flatten(init_lb)
         init_ub = torch.flatten(init_ub)
 
@@ -339,19 +291,10 @@ def check_postcondition(init_lb, init_ub, lb_rel, ub_rel, true_label):
         assert differences.shape[0] == 9
 
         # lower bounds of differences must be positive
-        numerical_diff = torch.empty((0,))
-        for i in range(9):
-                lb_temp = init_lb.clone()
-                row = differences[i]
-                bias = row[-1]
-                row = row[:-1]
+        neg_diff = torch.where(differences < 0, differences, torch.zeros_like(differences))
+        pos_diff = torch.where(differences > 0, differences, torch.zeros_like(differences))
 
-                lb_temp[row < 0] = init_ub[row < 0]
-
-                diff_num = torch.sum(row * lb_temp) + bias
-
-                numerical_diff = torch.cat((numerical_diff, diff_num.unsqueeze(0)), dim=0)
-
-        #print(numerical_diff)
-        
-        return int(numerical_diff.min() >= 0)
+        numerical_diff = neg_diff[:,:-1] @ init_ub + pos_diff[:,:-1] @ init_lb
+        numerical_diff = numerical_diff + differences[:,-1]
+ 
+        return numerical_diff
