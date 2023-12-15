@@ -203,13 +203,6 @@ def analyze(
         return backsubstitute_upper(layer_nr - 1, res_lb, res_ub)
 
     
-    def backsubstitute_lower(layer_nr):
-        if layer_nr == 0:
-            return lb
-        #backsubstitute lower bounds from layer layer_nr to layer 0
-        rel_lb = rel_lbounds[layer_nr]
-        return backsubstitute_lower(layer_nr - 1)
-
 
 
     # ub_rel = torch.eye(init_lb.numel())
@@ -272,11 +265,16 @@ def analyze(
 
 
         elif isinstance(layer, nn.LeakyReLU):
-            in_shape = lb_rel.shape
-            lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
+            lb, ub, lb_rel, ub_rel = transform_leaky_relu_rel(lb_1, ub_1, lb_rel, ub_rel, negslope = layer.negative_slope)
+            lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
+
+
             assert torch.all(lb <= ub)
-            lb_rel, ub_rel = transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope=layer.negative_slope)
-            assert in_shape == lb_rel.shape
+            assert lb_rel.shape == ub_rel.shape
+            lbounds.append(lb)
+            ubounds.append(ub)
+            rel_lbounds.append(lb_rel)
+            rel_ubounds.append(ub_rel)
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
         
@@ -309,7 +307,10 @@ def analyze(
     #2) check if the lower bound of the target output is greater than
 
     ver = torch.all(lb_1 >= 0)
-    print("differece between lb and max ub of other classes: ", lb_1.min())
+    if ver:
+        print("differece between lb and max ub of other classes: ", torch.sort(lb_1)[0][1])
+    else:
+        print("differece between lb and max ub of other classes: ", lb_1.min())
     return ver
 
 

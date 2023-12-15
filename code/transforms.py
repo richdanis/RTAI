@@ -100,10 +100,116 @@ def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd = 0.0):
         #assert(res_lb.shape == res_ub.shape == res_lb_rel.shape == res_ub_rel.shape)
 
 
-        
-
 
         return res_lb, res_ub, res_lb_rel, res_ub_rel
+
+def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd = 0.0):
+        """ 
+        
+        Propagate (non- and relational) bounds through a ReLU layer.
+        shape of lb and ub should be preserved. 
+        lb_rel and ub_rel are the relational bounds of the inputs of the relu
+
+        lambda is now a vector
+
+        """
+
+        if (negslope <= 1.0):
+                #TODO(1): Figure out a decission rule for the lambda values --> May not be the same as for normal relu
+                lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
+
+                #for lambda learning: lambd has to be between negslope and 1 (in the case negslope <=1)
+
+                res_lb = torch.empty(lb.shape)
+                res_ub = torch.empty(ub.shape)
+                res_lb_rel = torch.empty(lb.shape[0], lb.shape[0] + 1)
+                res_ub_rel = torch.empty(ub.shape[0], ub.shape[0] + 1)
+
+                for i in range(lb.shape[0]):
+                        if lb[i] >= 0:
+                                res_lb[i] = lb[i]
+                                res_ub[i] = ub[i]
+                                #two alternatives: 1. set lb_rel and ub_rel to a zeros vetor to a one in the i-th position or 2. keep them as the same relational bound
+                                #option 2 is correct! The rel_bounds are wrt previous neurons, not previous previous neurons
+                                res_lb_rel[i, :] = torch.zeros_like(res_lb_rel[i, :])
+                                res_lb_rel[i, i] = 1
+                                res_ub_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
+                                res_ub_rel[i, i] = 1
+                        elif ub[i] <= 0:
+                                res_lb[i] = negslope*lb[i]
+                                res_ub[i] = negslope*ub[i]
+
+                                res_lb_rel[i, :] = torch.zeros_like(res_lb_rel[i, :])
+                                res_lb_rel[i, i] = negslope
+                                res_ub_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
+                                res_ub_rel[i, i] = negslope
+                        else:
+                                res_lb[i] = lambd[i] * lb[i] #### need to check it later
+                                res_ub[i] = ub[i]
+                                #same two alternatives here
+                                res_lb_rel[i, :] = torch.zeros_like(res_lb_rel[i, :])
+                                res_lb_rel[i, i] = lambd[i]
+
+                                res_ub_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
+                                res_ub_rel[i, i] = 1 - (lb[i]*(negslope - 1))/(ub[i] - lb[i])
+                                res_ub_rel[i, -1] = (lb[i]*(negslope - 1))/(1-(lb[i]/ub[i]))
+                        
+
+                #assert(res_lb_rel.shape == lb_rel.shape)
+                #assert(res_ub_rel.shape == ub_rel.shape)
+                #assert(res_lb.shape == res_ub.shape == res_lb_rel.shape == res_ub_rel.shape)
+
+                return res_lb, res_ub, res_lb_rel, res_ub_rel
+        
+        elif (negslope > 1.0):
+                 #TODO(1): Figure out a decission rule for the lambda values --> May not be the same as for normal relu
+                lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
+
+                #for lambda learning: lambd has to be between negslope and 1 (in the case negslope <=1)
+
+                res_lb = torch.empty(lb.shape)
+                res_ub = torch.empty(ub.shape)
+                res_lb_rel = torch.empty(lb.shape[0], lb.shape[0] + 1)
+                res_ub_rel = torch.empty(ub.shape[0], ub.shape[0] + 1)
+
+                for i in range(lb.shape[0]):
+                        if lb[i] >= 0:
+                                res_lb[i] = lb[i]
+                                res_ub[i] = ub[i]
+                                #two alternatives: 1. set lb_rel and ub_rel to a zeros vetor to a one in the i-th position or 2. keep them as the same relational bound
+                                #option 2 is correct! The rel_bounds are wrt previous neurons, not previous previous neurons
+                                res_lb_rel[i, :] = torch.zeros_like(res_lb_rel[i, :])
+                                res_lb_rel[i, i] = 1
+                                res_ub_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
+                                res_ub_rel[i, i] = 1
+                        elif ub[i] <= 0:
+                                res_lb[i] = negslope*lb[i]
+                                res_ub[i] = negslope*ub[i]
+
+                                res_lb_rel[i, :] = torch.zeros_like(res_lb_rel[i, :])
+                                res_lb_rel[i, i] = negslope
+                                res_ub_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
+                                res_ub_rel[i, i] = negslope
+                        else:
+                                res_lb[i] = negslope * lb[i] #### need to check it later
+                                res_ub[i] = lambd[i] * ub[i]
+                                #same two alternatives here
+
+                                res_ub_rel[i, :] = torch.zeros_like(res_lb_rel[i, :])
+                                res_ub_rel[i, i] = lambd[i]
+
+                                res_lb_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
+                                res_lb_rel[i, i] = 1 - (lb[i]*(negslope - 1))/(ub[i] - lb[i])
+                                res_lb_rel[i, -1] = (lb[i]*(negslope - 1))/(1-(lb[i]/ub[i]))
+
+
+                return res_lb, res_ub, res_lb_rel, res_ub_rel
+
+
+
+        else:
+                raise NotImplementedError("The negative slope should be a positive number")
+  
 
 
 
