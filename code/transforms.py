@@ -1,37 +1,111 @@
 import torch
 import torch.nn as nn
 
+def transform_linear(lb, ub, weight, bias):
+        """
+        Propagate non-relational bounds through a linear layer.
+        lb and ub are of shape [784] in case of MNIST
 
-def transform_linear(lb_rel, ub_rel, weight, bias):
+        """
+
+        lb = lb.repeat(weight.shape[0], 1)
+        ub = ub.repeat(weight.shape[0], 1)
+        assert lb.shape == ub.shape == weight.shape
+
+
+        mul_lb = torch.where(weight > 0, lb, ub)
+        mul_ub = torch.where(weight > 0, ub, lb)
+
+        lb = (mul_lb * weight).sum(dim=1)
+        ub = (mul_ub * weight).sum(dim=1)
+        assert lb.shape == ub.shape == bias.shape
+
+        if bias is not None:
+            lb += bias
+            ub += bias
+
+        #lb = lb.unsqueeze(0)
+        #ub = ub.unsqueeze(0)
+
+        return lb, ub
+
+
+
+def transform_linear_rel(weight, bias):
         """
         Propagate relational bounds through a linear layer.
+        should return the weight matrix and the bias vector appended as the last column of the weight matrix
+
         """
-        lb_res = torch.empty(weight.shape[0], lb_rel.shape[1])
-        ub_res = torch.empty(weight.shape[0], lb_rel.shape[1])
-        for i in range(weight.shape[0]):
+        lb_shape = [weight.shape[0], weight.shape[1] + 1]
+        ub_shape = [weight.shape[0], weight.shape[1]+1]
+        
 
-               row = weight[i,:]
+        lb_rel = torch.cat((weight, bias.unsqueeze(-1)), dim=-1)
+        ub_rel = torch.cat((weight, bias.unsqueeze(-1)), dim=-1)
 
-               lb_temp = lb_rel.clone()
-               ub_temp = ub_rel.clone()
+        # assert(lb_rel.shape == ub_rel.shape)
+        # assert(lb_rel.shape == lb_shape)
+        # assert(ub_rel.shape == ub_shape)
 
-               lb_temp[row < 0,:] = ub_rel[row < 0,:]
-               ub_temp[row < 0,:] = lb_rel[row < 0,:]
+        return lb_rel, ub_rel
 
-               row = row.unsqueeze(1)
+def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd = 0.0):
+        """ 
+        
+        Propagate (non- and relational) bounds through a ReLU layer.
+        shape of lb and ub should be preserved. 
+        lb_rel and ub_rel are the relational bounds of the inputs of the relu
 
-               lb_temp = row * lb_temp
-               ub_temp = row * ub_temp
+        lambda is now a vector
 
-               lb_temp = lb_temp.sum(dim=0)
-               ub_temp = ub_temp.sum(dim=0)
+        """
+        #Lambda population option 1: the ith element of lmbd should be zero is the ith element of ub is bigger than -the ith element of lb, otherwise 1
+        lambd = torch.where(ub <= -lb, torch.zeros_like(ub), torch.ones_like(ub))
 
-               lb_temp[-1] = lb_temp[-1] + bias[i]
-               ub_temp[-1] = ub_temp[-1] + bias[i]
+        res_lb = torch.empty(lb.shape)
+        res_ub = torch.empty(ub.shape)
+        res_lb_rel = torch.empty(lb.shape[0], lb.shape[0] + 1)
+        res_ub_rel = torch.empty(ub.shape[0], ub.shape[0] + 1)
 
-               lb_res[i] = lb_temp
-               ub_res[i] = ub_temp
-        return lb_res, ub_res
+        for i in range(lb.shape[0]):
+                if lb[i] >= 0:
+                        res_lb[i] = lb[i]
+                        res_ub[i] = ub[i]
+                        #two alternatives: 1. set lb_rel and ub_rel to a zeros vetor to a one in the i-th position or 2. keep them as the same relational bound
+                        #option 2 is correct! The rel_bounds are wrt previous neurons, not previous previous neurons
+                        res_lb_rel[i, :] = torch.zeros_like(res_lb_rel[i, :])
+                        res_lb_rel[i, i] = 1
+                        res_ub_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
+                        res_ub_rel[i, i] = 1
+                elif ub[i] <= 0:
+                        res_lb[i] = 0
+                        res_ub[i] = 0
+                        res_lb_rel[i, :] = torch.zeros_like(res_lb_rel[i, :])
+                        res_ub_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
+                else:
+                        res_lb[i] = lambd[i] * lb[i]
+                        res_ub[i] = ub[i]
+                        #same two alternatives here
+                        res_lb_rel[i, :] = torch.zeros_like(res_lb_rel[i, :])
+                        res_lb_rel[i, i] = lambd[i]
+
+                        res_ub_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
+                        res_ub_rel[i, i] = ub[i]/(ub[i] - lb[i])
+                        res_ub_rel[i, -1] = -(lb[i]*ub[i])/(ub[i] - lb[i])
+                
+
+        #assert(res_lb_rel.shape == lb_rel.shape)
+        #assert(res_ub_rel.shape == ub_rel.shape)
+        #assert(res_lb.shape == res_ub.shape == res_lb_rel.shape == res_ub_rel.shape)
+
+
+        
+
+
+        return res_lb, res_ub, res_lb_rel, res_ub_rel
+
+
 
 def matrix_matrix_mul_rel(lb_rel, ub_rel, weight, bias):
         """
@@ -145,6 +219,7 @@ def transform_ReLU(lb_rel, ub_rel, lb, ub):
 
 
         ub_rel = upper_slope.unsqueeze(-1) * (ub_rel - lb.unsqueeze(-1))
+
         lb_rel = torch.zeros_like(lb_rel)
 
 
@@ -153,14 +228,14 @@ def transform_ReLU(lb_rel, ub_rel, lb, ub):
         #ub = ub.flatten(start_dim=0)
         #ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
 
-        ub_rel[ub < 0,:] = 0
-        lb_rel[ub < 0,:] = 0
+        ub_rel[ub <= 0,:] = torch.zeros_like(ub_rel[ub <= 0,:])
+        lb_rel[ub <= 0,:] = torch.zeros_like(lb_rel[ub <= 0,:])
 
         # flatten lb, lb_rel
         #lb = lb.flatten(start_dim=0)
         #lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
 
-        lb_rel[lb >= 0,:] = lb_rel_before[lb >= 0,:]
+        lb_rel[lb >= 0,:] = lb_rel_before[lb >= 0,:]    
         ub_rel[lb >= 0,:] = ub_rel_before[lb >= 0,:]
 
         #lb_rel = lb_rel.view(in_shape)
@@ -323,7 +398,7 @@ def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
                 lb_res[i] = lb_temp @ init_lb_temp + lb_b
 
         #view thign not necessary, would hide an error if it was there
-        
+
         #lb_res = lb_res.view(out_shape)
         #ub_res = ub_res.view(out_shape)
 

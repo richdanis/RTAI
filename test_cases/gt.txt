@@ -31,4 +31,8 @@ conv_2,img2_mnist_0.1570.txt,verified
 conv_3,img0_cifar10_0.0058.txt,not verified
 conv_3,img3_cifar10_0.0220.txt,verified
 conv_4,img0_mnist_0.2724.txt,not verified
-conv_4,img2_mnist_0.1797.txt,verified
+
+
+
+
+--net fc_2 --spec test_cases/fc_2/img3_mnist_0.0639.txt
