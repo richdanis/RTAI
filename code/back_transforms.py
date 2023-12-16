@@ -4,6 +4,8 @@ import torch.nn as nn
 class Bounds():
 
         def __init__(self, lb_mat, ub_mat, lb_bias, ub_bias):
+
+                # bounds for each layer
                 
                 self.lb_mat = lb_mat
                 self.ub_mat = ub_mat
@@ -12,6 +14,8 @@ class Bounds():
                 self.ub_bias = ub_bias
 
         def back(self, curr_bound):
+
+                # backsubstitute curr_bound through layer
 
                 curr_ub = curr_bound.ub_mat
                 curr_ub_bias = curr_bound.ub_bias
@@ -37,16 +41,26 @@ class ReLU_Bounds():
 
         def __init__(self, lb, ub, neg_slope, alpha):
 
+                # special class for ReLUs as we need to update
+                # the alpha parameter during backsubstitution
+
                 self.neg_slope = neg_slope
                 self.alpha = alpha
                 self.lb = lb
                 self.ub = ub
+                self.lb_mat = None
+                self.ub_mat = None
+                self.lb_bias = None
+                self.ub_bias = None
 
         def get_bounds(self):
 
-                # clamp back alpha
+                # clamp back alpha to valid range
                 with torch.no_grad():
-                        self.alpha.clamp_(self.neg_slope, 1)
+                        if self.neg_slope < 1.0:
+                                self.alpha.clamp_(self.neg_slope, 1)
+                        else:
+                                self.alpha.clamp_(1, self.neg_slope)
 
                 # masks
                 crossing = torch.logical_and(self.ub > 0, self.lb < 0)
@@ -87,34 +101,17 @@ class ReLU_Bounds():
 
         def back(self, curr_bound):
 
+                # get new bounds using updated alpha
+
                 prev_bound = self.get_bounds()
 
-                return prev_bound.back(curr_bound)
+                # perform backsubstitution
 
+                return prev_bound.back(curr_bound)
 
 def transform_linear(weight, bias):
 
         return Bounds(weight, weight, bias, bias)
-
-def transform_ReLU_alpha(lb, ub, alpha):
-        
-        # careful might want to flatten
-
-        crossing = torch.logical_and(ub > 0, lb < 0)
-        pos = lb > 0
-
-        ones = torch.where(pos, torch.ones_like(lb), torch.zeros_like(lb))
-
-        upper_slope = torch.where(crossing, ub / (ub - lb), torch.zeros_like(lb))
-        lower_slope = torch.where(crossing, alpha, torch.zeros_like(lb))
-        
-        bias_ub = torch.where(crossing, -ub * lb / (ub - lb), torch.zeros_like(lb))
-        bias_lb = torch.zeros_like(lb)
-
-        weight_lb = torch.diag(ones + lower_slope)
-        weight_ub = torch.diag(ones + upper_slope)
-
-        return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
 
 def transform_conv2d(conv, shape):
 
@@ -154,55 +151,43 @@ def transform_conv2d(conv, shape):
 
         return Bounds(mat, mat, bias, bias), out_shape
 
-def transform_leakyReLU(lb, ub, slope, alpha):
+def update_ReLUs(bounds, init_lb, init_ub):
 
-        # masks
-        crossing = torch.logical_and(ub > 0, lb < 0)
-        pos = lb > 0
-        neg = ub <= 0
+        # update ReLU bounds
 
-        # default weights
-        ones = torch.where(pos, torch.ones_like(lb), torch.zeros_like(lb))
-        neg_ones = torch.where(neg, slope * torch.ones_like(lb), torch.zeros_like(lb))
+        for i in range(len(bounds)):
 
-        if slope < 1.0:
+                if isinstance(bounds[i], ReLU_Bounds):
 
-                # compute upper slope and bias
-                upper_slope = torch.where(crossing, (ub - slope*lb) / (ub - lb), torch.zeros_like(lb))
-                weight_ub = torch.diag(ones + neg_ones + upper_slope)
-                bias_ub = torch.where(crossing, ub * lb * (slope - 1) / (ub - lb), torch.zeros_like(lb))
+                        # get new lb, ub
+                        curr_bounds = back(bounds[:i].copy())
+                        lb, ub = eval(curr_bounds, init_lb, init_ub)
 
-                # compute lower slope and bias
-                lower_slope = torch.where(crossing, alpha, torch.zeros_like(lb))
-                weight_lb = torch.diag(ones + neg_ones + lower_slope)
-                bias_lb = torch.zeros_like(lb)
-
-                return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
-
-        elif slope > 1.0:
-
-                # compute lower slope and bias
-                lower_slope = torch.where(crossing, (ub - slope*lb) / (ub - lb), torch.zeros_like(lb))
-                weight_lb = torch.diag(ones + neg_ones + lower_slope)
-                bias_lb = torch.where(crossing, ub * lb * (slope - 1) / (ub - lb), torch.zeros_like(lb))
-
-                # compute upper slope and bias
-                upper_slope = torch.where(crossing, alpha, torch.zeros_like(lb))
-                weight_ub = torch.diag(ones + neg_ones + upper_slope)
-                bias_ub = torch.zeros_like(lb)
-
-                return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
+                        # update ReLU
+                        bounds[i].lb = lb
+                        bounds[i].ub = ub
+                        
+                        # get new bounds
+                        new_bound = bounds[i].get_bounds()
+                        
+                        # update bounds
+                        bounds[i] = new_bound
 
 def back(bounds):
+
+        # backsubstitute bounds through network
 
         curr_bound = bounds.pop()
 
         while bounds:
+
                 curr_bound = bounds.pop().back(curr_bound)
 
         return curr_bound
 
 def eval(bound, init_lb, init_ub):
+
+        # evaluate bounds on initial box
 
         pos_ub = torch.where(bound.ub_mat > 0, bound.ub_mat, torch.zeros_like(bound.ub_mat))
         neg_ub = torch.where(bound.ub_mat < 0, bound.ub_mat, torch.zeros_like(bound.ub_mat))

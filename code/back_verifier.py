@@ -20,7 +20,7 @@ def analyze(
 
     # SETUP
 
-    print(net)
+    # print(net)
 
     # set weights to no_grad:
     for param in net.parameters():
@@ -73,7 +73,10 @@ def analyze(
 
     bounds.append(transform_linear(mat, torch.zeros(10)))
     verified = False
-    optimizer = torch.optim.Adam(alphas, lr=1)
+    
+    optimizer = None
+    if alphas:
+        optimizer = torch.optim.Adam(alphas, lr=0.1)
 
     iterations = 0
 
@@ -84,7 +87,11 @@ def analyze(
         lb, _ = eval(bound, init_lb, init_ub)
         verified = (lb.min() >= 0)
 
-        print(lb)
+        if iterations % 5 == 0:
+            print(lb)
+
+        if not alphas:
+            return int(verified)
 
         # BACKWARD PASS
         optimizer.zero_grad()
@@ -93,7 +100,7 @@ def analyze(
         optimizer.step()
 
         iterations += 1
-        if iterations > 5:
+        if iterations > 100:
             break
 
     return int(verified)

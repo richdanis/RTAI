@@ -11,7 +11,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": ["--net", "fc_4", "--spec", "test_cases/fc_4/img3_mnist_0.0014.txt"]
+            "args": ["--net", "fc_4", "--spec", "test_cases/fc_4/img4_mnist_0.0554.txt"]
         }
     ]
 }
