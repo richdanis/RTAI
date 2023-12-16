@@ -9,5 +9,5 @@ do
   case=${array[1]}
   label=${array[2]}
   echo ${net} ${case} ${label}
-  python code/alpha_verifier.py --net ${net} --spec test_cases/${net}/${case}  
+  python code/back_verifier.py --net ${net} --spec test_cases/${net}/${case}  
 done < test_cases/gt.txt

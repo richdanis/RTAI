@@ -6,7 +6,7 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from transforms import *
+from back_transforms import *
 
 DEVICE = "cpu"
 
@@ -20,7 +20,7 @@ def analyze(
 
     # SETUP
 
-    # print(net)
+    #print(net)
 
     # set weights to no_grad:
     for param in net.parameters():
@@ -29,42 +29,45 @@ def analyze(
     init_lb = torch.clamp(inputs - eps, 0, 1)
     init_ub = torch.clamp(inputs + eps, 0, 1)
 
-    ub_rel = torch.eye(init_lb.numel())
-    ub_rel = torch.reshape(ub_rel, (init_lb.shape[0], init_lb.shape[1], init_lb.shape[2], init_lb.shape[0] * init_lb.shape[1] * init_lb.shape[2]))
-    # add constant 0 for bias
-    shape = ub_rel.shape[:-1] + (1,)
-    ub_rel = torch.cat((ub_rel, torch.zeros(shape)), dim=-1)
-    lb_rel = ub_rel.detach().clone()
+    shape = init_lb.shape
+
+    init_lb = init_lb.view((-1,))
+    init_ub = init_ub.view((-1,))
+
+    bounds = []
 
     # FORWARD PASS
 
     # propagate box through network
     for layer in net:
         if isinstance(layer, nn.Flatten):
-            ub_rel = torch.flatten(ub_rel, start_dim=0, end_dim=-2)
-            lb_rel = torch.flatten(lb_rel, start_dim=0, end_dim=-2)
+            pass
         elif isinstance(layer, nn.Linear):
-            lb_rel, ub_rel = transform_linear(lb_rel, ub_rel, layer.weight, layer.bias)
+            bounds.append(transform_linear(layer.weight, layer.bias))
         elif isinstance(layer, nn.Conv2d):
-            lb_rel, ub_rel = transform_conv2d(lb_rel, ub_rel, layer)
+            conv_bounds, shape = transform_conv2d(layer, shape)
+            bounds.append(conv_bounds)
         elif isinstance(layer, nn.ReLU):
-            in_shape = lb_rel.shape
-            lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
-            assert torch.all(lb <= ub)
-            lb_rel, ub_rel = transform_ReLU(lb_rel, ub_rel, lb, ub)
-            assert in_shape == lb_rel.shape
+            curr_bound = back(bounds.copy())
+            lb, ub = eval(curr_bound, init_lb, init_ub)
+            alpha = torch.where(ub.abs() > lb.abs(), torch.ones_like(lb), torch.zeros_like(lb))
+            bounds.append(transform_ReLU_alpha(lb, ub, alpha))
         elif isinstance(layer, nn.LeakyReLU):
-            in_shape = lb_rel.shape
-            lb, ub = evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel)
-            assert (lb > ub).sum() == 0
-            lb_rel, ub_rel = transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope=layer.negative_slope)
-            assert in_shape == lb_rel.shape
+            pass
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
 
+    # ADD LAST LAYER
+    mat = -torch.eye(10)
+    mat[:,true_label] = 1
+    mat[true_label,true_label] = 0
+
+    bounds.append(transform_linear(mat, torch.zeros(10)))
+
     # CHECK VERIFICATION
-    diffs = differences(init_lb, init_ub, lb_rel, ub_rel, true_label)
-    return int(diffs.min() >= 0)
+    bound = back(bounds)
+    lb, ub = eval(bound, init_lb, init_ub)
+    return int(lb.min() >= 0)
 
 
 def main():
