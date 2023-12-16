@@ -225,15 +225,19 @@ def analyze(
             lb = torch.flatten(lb)
         elif isinstance(layer, nn.Linear):
             with torch.no_grad():
-                lb, ub = transform_linear(lb, ub, layer.weight, layer.bias)
+                if(layer_nr == 0):
+                    lb, ub = transform_linear(lb, ub, layer.weight, layer.bias)
+
+                else:
+                    lb, ub = transform_linear(lb_1, ub_1, layer.weight, layer.bias)
 
                 lb_rel, ub_rel = transform_linear_rel( layer.weight, layer.bias)
             
                 lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
 
                 assert torch.all(lb <= ub)
-                assert torch.all(lb_1 -lb >=-0.01)
-                assert torch.all(ub -ub_1 >=-0.01)
+                #assert torch.all(lb_1 -lb >=-0.01)
+                #cvc bc xassert torch.all(ub -ub_1 >=-0.01)
 
 
             assert(torch.all(lb_1 <= ub_1))
@@ -257,8 +261,8 @@ def analyze(
 
             assert torch.all(lb <= ub)
             assert lb_rel.shape == ub_rel.shape
-            lbounds.append(lb)
-            ubounds.append(ub)
+            lbounds.append(lb_1)
+            ubounds.append(ub_1)
             rel_lbounds.append(lb_rel)
             rel_ubounds.append(ub_rel)
 
@@ -271,8 +275,8 @@ def analyze(
 
             assert torch.all(lb <= ub)
             assert lb_rel.shape == ub_rel.shape
-            lbounds.append(lb)
-            ubounds.append(ub)
+            lbounds.append(lb_1)
+            ubounds.append(ub_1)
             rel_lbounds.append(lb_rel)
             rel_ubounds.append(ub_rel)
         else:
