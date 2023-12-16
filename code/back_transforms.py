@@ -32,6 +32,65 @@ class Bounds():
                 res_lb_bias = pos_lb @ self.lb_bias + neg_lb @ self.ub_bias + curr_lb_bias
 
                 return Bounds(res_lb, res_ub, res_lb_bias, res_ub_bias)
+        
+class ReLU_Bounds():
+
+        def __init__(self, lb, ub, neg_slope, alpha):
+
+                self.neg_slope = neg_slope
+                self.alpha = alpha
+                self.lb = lb
+                self.ub = ub
+
+        def get_bounds(self):
+
+                # clamp back alpha
+                with torch.no_grad():
+                        self.alpha.clamp_(self.neg_slope, 1)
+
+                # masks
+                crossing = torch.logical_and(self.ub > 0, self.lb < 0)
+                pos = self.lb > 0
+                neg = self.ub <= 0
+
+                # default weights
+                ones = torch.where(pos, torch.ones_like(self.lb), torch.zeros_like(self.lb))
+                neg_ones = torch.where(neg, self.neg_slope * torch.ones_like(self.lb), torch.zeros_like(self.lb))
+
+                if self.neg_slope < 1.0:
+
+                        # compute upper slope and bias
+                        upper_slope = torch.where(crossing, (self.ub - self.neg_slope*self.lb) / (self.ub - self.lb), torch.zeros_like(self.lb))
+                        weight_ub = torch.diag(ones + neg_ones + upper_slope)
+                        bias_ub = torch.where(crossing, self.ub * self.lb * (self.neg_slope - 1) / (self.ub - self.lb), torch.zeros_like(self.lb))
+
+                        # compute lower slope and bias
+                        lower_slope = torch.where(crossing, self.alpha, torch.zeros_like(self.lb))
+                        weight_lb = torch.diag(ones + neg_ones + lower_slope)
+                        bias_lb = torch.zeros_like(self.lb)
+
+                        return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
+
+                elif self.neg_slope > 1.0:
+
+                        # compute lower slope and bias
+                        lower_slope = torch.where(crossing, (self.ub - self.neg_slope*self.lb) / (self.ub - self.lb), torch.zeros_like(self.lb))
+                        weight_lb = torch.diag(ones + neg_ones + lower_slope)
+                        bias_lb = torch.where(crossing, self.ub * self.lb * (self.neg_slope - 1) / (self.ub - self.lb), torch.zeros_like(self.lb))
+
+                        # compute upper slope and bias
+                        upper_slope = torch.where(crossing, self.alpha, torch.zeros_like(self.lb))
+                        weight_ub = torch.diag(ones + neg_ones + upper_slope)
+                        bias_ub = torch.zeros_like(self.lb)
+
+                        return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
+
+        def back(self, curr_bound):
+
+                prev_bound = self.get_bounds()
+
+                return prev_bound.back(curr_bound)
+
 
 def transform_linear(weight, bias):
 
@@ -95,83 +154,44 @@ def transform_conv2d(conv, shape):
 
         return Bounds(mat, mat, bias, bias), out_shape
 
-def transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
+def transform_leakyReLU(lb, ub, slope, alpha):
 
-        in_shape = lb_rel.shape
+        # masks
+        crossing = torch.logical_and(ub > 0, lb < 0)
+        pos = lb > 0
+        neg = ub <= 0
 
-        if slope == 1.0:
+        # default weights
+        ones = torch.where(pos, torch.ones_like(lb), torch.zeros_like(lb))
+        neg_ones = torch.where(neg, slope * torch.ones_like(lb), torch.zeros_like(lb))
 
-                return lb_rel, ub_rel
-        
-        elif slope < 1.0:
+        if slope < 1.0:
 
-                # compute upper slope and offset
-                upper_slope = (ub - slope*lb) / (ub - lb)
-                upper_slope = upper_slope.unsqueeze(-1)
+                # compute upper slope and bias
+                upper_slope = torch.where(crossing, (ub - slope*lb) / (ub - lb), torch.zeros_like(lb))
+                weight_ub = torch.diag(ones + neg_ones + upper_slope)
+                bias_ub = torch.where(crossing, ub * lb * (slope - 1) / (ub - lb), torch.zeros_like(lb))
 
-                offset = ub * lb * (slope - 1) / (ub - lb)
-                offset = offset.flatten(start_dim=0)
+                # compute lower slope and bias
+                lower_slope = torch.where(crossing, alpha, torch.zeros_like(lb))
+                weight_lb = torch.diag(ones + neg_ones + lower_slope)
+                bias_lb = torch.zeros_like(lb)
 
-                # default upper and lower bound
-                # maybe add offset only to constant?!
-                ub_res = upper_slope * ub_rel
-                lb_res = slope * lb_rel
-
-                # flatten
-                ub = ub.flatten(start_dim=0)
-                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-                ub_res = ub_res.flatten(start_dim=0, end_dim=-2)
-
-                lb = lb.flatten(start_dim=0)
-                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-                lb_res = lb_res.flatten(start_dim=0, end_dim=-2)
-
-                # add offset
-                ub_res[:,-1] = ub_res[:,-1] + offset
-                
-                # when not crossing
-                ub_res[ub < 0,:] = slope * ub_rel[ub < 0,:]
-                lb_res[ub < 0,:] = slope * lb_rel[ub < 0,:]
-
-                lb_res[lb > 0,:] = lb_rel[lb > 0,:]
-                ub_res[lb > 0,:] = ub_rel[lb > 0,:]
-                
-
-                return lb_res.view(in_shape), ub_res.view(in_shape)
+                return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
 
         elif slope > 1.0:
 
-                # compute upper slope and offset
-                lower_slope = (ub - slope*lb) / (ub - lb)
-                lower_slope = lower_slope.unsqueeze(-1)
+                # compute lower slope and bias
+                lower_slope = torch.where(crossing, (ub - slope*lb) / (ub - lb), torch.zeros_like(lb))
+                weight_lb = torch.diag(ones + neg_ones + lower_slope)
+                bias_lb = torch.where(crossing, ub * lb * (slope - 1) / (ub - lb), torch.zeros_like(lb))
 
-                offset = ub * lb * (slope - 1) / (ub - lb)
-                offset = offset.flatten(start_dim=0)
-                
-                # default upper and lower bound
-                ub_res = slope * ub_rel
-                lb_res = lower_slope * lb_rel
+                # compute upper slope and bias
+                upper_slope = torch.where(crossing, alpha, torch.zeros_like(lb))
+                weight_ub = torch.diag(ones + neg_ones + upper_slope)
+                bias_ub = torch.zeros_like(lb)
 
-                # flatten
-                ub = ub.flatten(start_dim=0)
-                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-                ub_res = ub_res.flatten(start_dim=0, end_dim=-2)
-
-                lb = lb.flatten(start_dim=0)
-                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-                lb_res = lb_res.flatten(start_dim=0, end_dim=-2)
-
-                # add offset
-                lb_res[:,-1] = lb_res[:,-1] + offset
-                
-                # when not crossing
-                ub_res[ub < 0,:] = slope * ub_rel[ub < 0,:]
-                lb_res[ub < 0,:] = slope * lb_rel[ub < 0,:]
-
-                lb_res[lb > 0,:] = lb_rel[lb > 0,:]
-                ub_res[lb > 0,:] = ub_rel[lb > 0,:]
-
-                return lb_res.view(in_shape), ub_res.view(in_shape)
+                return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
 
 def back(bounds):
 

@@ -20,7 +20,7 @@ def analyze(
 
     # SETUP
 
-    #print(net)
+    print(net)
 
     # set weights to no_grad:
     for param in net.parameters():
@@ -35,6 +35,7 @@ def analyze(
     init_ub = init_ub.view((-1,))
 
     bounds = []
+    alphas = []
 
     # FORWARD PASS
 
@@ -50,10 +51,18 @@ def analyze(
         elif isinstance(layer, nn.ReLU):
             curr_bound = back(bounds.copy())
             lb, ub = eval(curr_bound, init_lb, init_ub)
+            # heuristic alpha initialization, minimize area of triangle
             alpha = torch.where(ub.abs() > lb.abs(), torch.ones_like(lb), torch.zeros_like(lb))
-            bounds.append(transform_ReLU_alpha(lb, ub, alpha))
+            alpha.requires_grad = True
+            alphas.append(alpha)
+            bounds.append(ReLU_Bounds(lb, ub, 0, alpha))
         elif isinstance(layer, nn.LeakyReLU):
-            pass
+            curr_bound = back(bounds.copy())
+            lb, ub = eval(curr_bound, init_lb, init_ub)
+            alpha = torch.where(ub.abs() > lb.abs(), torch.ones_like(lb), torch.full(lb.shape, layer.negative_slope))
+            alpha.requires_grad = True
+            alphas.append(alpha)
+            bounds.append(ReLU_Bounds(lb, ub, layer.negative_slope, alpha))
         else:
             raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
 
@@ -63,11 +72,31 @@ def analyze(
     mat[true_label,true_label] = 0
 
     bounds.append(transform_linear(mat, torch.zeros(10)))
+    verified = False
+    optimizer = torch.optim.Adam(alphas, lr=1)
 
-    # CHECK VERIFICATION
-    bound = back(bounds)
-    lb, ub = eval(bound, init_lb, init_ub)
-    return int(lb.min() >= 0)
+    iterations = 0
+
+    while not verified:
+        
+        # CHECK VERIFICATION
+        bound = back(bounds.copy())
+        lb, _ = eval(bound, init_lb, init_ub)
+        verified = (lb.min() >= 0)
+
+        print(lb)
+
+        # BACKWARD PASS
+        optimizer.zero_grad()
+        loss = -lb.min()
+        loss.backward(retain_graph=True)
+        optimizer.step()
+
+        iterations += 1
+        if iterations > 5:
+            break
+
+    return int(verified)
 
 
 def main():
