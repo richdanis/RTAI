@@ -67,7 +67,7 @@ def analyze(
     rel_lbounds = []
     rel_ubounds = []
 
-    def backsubstitute_upper(layer_nr, res_lb, res_ub):
+    def backsubstitute_upper_orig(layer_nr, res_lb, res_ub):
         """
         assume current layer is layer_nr = i+1, has m Neurons and previous layer is layer_nr = i, has n Neurons and layer i-1 has k Neurons
         -> ub_rel[i+1].shape = (m, n+1)
@@ -202,6 +202,155 @@ def analyze(
         #assert torch.all(res_lb == res_ub)
         return backsubstitute_upper(layer_nr - 1, res_lb, res_ub)
 
+
+    def backsubstitute_upper(layer_nr, res_lb, res_ub):
+        """
+        assume current layer is layer_nr = i+1, has m Neurons and previous layer is layer_nr = i, has n Neurons and layer i-1 has k Neurons
+        -> ub_rel[i+1].shape = (m, n+1)
+        -> ub_rel[i].shape = (n, k+1)
+
+        create a tensor res that has shape (m, k+1)
+        every of the m rows looks like this (assumnig all entries in ub_rel[i+1][j, :-1] are non-negative]):
+        ub_rel[i+1][j, :-1] @ ub_rel[i][:,1] , ub_rel[i+1][j, :-1] @ ub_rel[i][:,2] , ...,  ub_rel[i+1][j, :-1] @  ub_rel[i][:,-1] + ub_rel[i+1][j, -1]
+
+        if the lth entry in ub_rel[i+1][j, :-1] is negative, the lth row of ub_rel[i] hast to be exchanged with the lth row of lb_rel[i]
+        
+
+        """
+        
+
+        #Seems to work for layer_nr = 0 -> Box bounds are the same as backsubstituted relational bounds
+        if layer_nr == 0:
+            rel_lb = torch.zeros(res_lb.shape[0])
+            rel_ub = torch.zeros(res_ub.shape[0])
+
+
+            for i in range(res_lb.shape[0]):
+                init_lb_temp = init_lb.clone()
+                init_ub_temp = init_ub.clone()
+                coeffs = res_lb[i, :-1]
+                bias = res_lb[i, -1]
+
+                # #TODO Exchange j-th entry of init_ub with jth entry of init_lb if  jth entry of coeffs is negative
+                # for j in range(coeffs.shape[0]):
+                #     if coeffs[j] < 0:
+                #         init_ub_temp[j], init_lb_temp[j] = init_lb_temp[j].clone(), init_ub_temp[j].clone()
+                    
+                negative_coeffs_mask = coeffs < 0
+                init_ub_temp[negative_coeffs_mask], init_lb_temp[negative_coeffs_mask] = init_lb_temp[negative_coeffs_mask].clone(), init_ub_temp[negative_coeffs_mask].clone()
+                #compute the i-th entry of the tensor res_ub and res_lb
+                
+                rel_lb[i] = torch.matmul(init_lb_temp, coeffs)
+                rel_lb[i] += bias
+                #rel_ub[i] = torch.matmul(init_ub_temp, coeffs) + bias
+
+
+            for i in range(res_ub.shape[0]):
+                init_lb_temp = init_lb.clone()
+                init_ub_temp = init_ub.clone()
+                coeffs = res_ub[i, :-1]
+                bias = res_ub[i, -1]
+
+                # #TODO Exchange j-th entry of init_ub with jth entry of init_lb if  jth entry of coeffs is negative
+                # for j in range(coeffs.shape[0]):
+                #     if coeffs[j] < 0:
+                #         init_ub_temp[j], init_lb_temp[j] = init_lb_temp[j].clone(), init_ub_temp[j].clone()
+                negative_coeffs_mask = coeffs < 0
+                init_ub_temp[negative_coeffs_mask], init_lb_temp[negative_coeffs_mask] = init_lb_temp[negative_coeffs_mask].clone(), init_ub_temp[negative_coeffs_mask].clone()
+                    
+                #compute the i-th entry of the tensor res_ub and res_lb
+                rel_ub[i] = torch.matmul(init_ub_temp, coeffs) + bias
+
+            assert (rel_lb.shape == rel_ub.shape)
+            assert torch.all(rel_lb <= rel_ub)
+        
+            return rel_lb, rel_ub
+
+                        
+        #backsubstitute upper bounds from layer layer_nr to layer 0
+        rel_ub = res_ub.clone()
+        rel_lb = res_lb.clone()
+
+        rel_ub_prev = rel_ubounds[layer_nr - 1].clone()
+        rel_lb_prev = rel_lbounds[layer_nr - 1].clone()
+        # rel_ub_prev_1 = rel_ubounds[layer_nr - 1].clone()
+        # rel_lb_prev_1 = rel_lbounds[layer_nr - 1].clone()
+
+        res_ub = torch.zeros((rel_ub.shape[0], rel_ub_prev.shape[1]))
+        res_lb = torch.zeros((rel_lb.shape[0], rel_lb_prev.shape[1]))
+
+        #pupulate res_lb
+        for i in range(rel_lb.shape[0]):
+            
+            # if relu_list[layer_nr] == 1:
+            #     coeffs = rel_ub[i, :]
+            # else:
+            #     coeffs = rel_lb[i, :-1]
+            #     bias = rel_lb[i, -1]
+            coeffs = rel_lb[i, :-1]
+            bias = rel_lb[i, -1]
+
+            rel_ub_prev_temp = rel_ub_prev.clone()
+            rel_lb_prev_temp = rel_lb_prev.clone()
+            
+
+            #if the jth entry of coeffs is negative, exchange the jth row of rel_ub_prev with the jth row of rel_lb_prev
+            #TODO: check if this is correct with relus: here bounds are allways the same
+            negative_coeffs_mask = coeffs < 0
+            rel_ub_prev_temp[negative_coeffs_mask], rel_lb_prev_temp[negative_coeffs_mask] = rel_lb_prev[negative_coeffs_mask], rel_ub_prev[negative_coeffs_mask]
+                  
+
+            #compute the tensor res_ub that has shape (m, k+1)
+            # for j in range(rel_ub_prev.shape[1]):
+            #     res_lb[i][j] = torch.matmul(rel_lb_prev_temp[:, j], coeffs)
+            res_lb[i] = torch.matmul(rel_lb_prev_temp.t(), coeffs.unsqueeze(-1)).squeeze(-1)
+
+
+            # if relu_list[layer_nr] == 0:
+            #     res_lb[i][-1] = torch.matmul(rel_lb_prev_temp[:,-1], coeffs) + bias
+            res_lb[i][-1] = torch.matmul(rel_lb_prev_temp[:,-1], coeffs)
+            res_lb[i][-1].add_(bias)
+
+
+
+        #pupulate res_ub
+        for i in range(rel_ub.shape[0]):
+
+            # if relu_list[layer_nr] == 1:
+            #     coeffs = rel_ub[i, :]
+            # else:
+            #     coeffs = rel_lb[i, :-1]
+            #     bias = rel_lb[i, -1]
+
+            coeffs = rel_lb[i, :-1]
+            bias = rel_lb[i, -1]
+
+            rel_ub_prev_temp = rel_ub_prev.clone()
+            rel_lb_prev_temp = rel_lb_prev.clone()
+
+            #if the jth entry of coeffs is negative, exchange the jth row of rel_ub_prev with the jth row of rel_lb_prev
+            #TODO: check if this is correct with relus: here bounds are allways the same
+            negative_coeffs_mask = coeffs < 0
+            rel_ub_prev_temp[negative_coeffs_mask], rel_lb_prev_temp[negative_coeffs_mask] = rel_lb_prev[negative_coeffs_mask], rel_ub_prev[negative_coeffs_mask]
+                  
+
+            #compute the tensor res_ub that has shape (m, k+1)
+            # for j in range(rel_lb_prev.shape[1]):
+            #     res_ub[i][j] = torch.matmul(rel_ub_prev_temp[:, j], coeffs)
+
+            res_ub[i] = torch.matmul(rel_ub_prev_temp.t(), coeffs.unsqueeze(-1)).squeeze(-1)
+            
+            # if relu_list[layer_nr] == 0:
+            #     res_ub[i][-1] = torch.matmul(rel_ub_prev_temp[:,-1], coeffs) + bias
+
+            res_ub[i][-1] = torch.matmul(rel_ub_prev_temp[:,-1], coeffs)
+            res_ub[i][-1].add_(bias)
+        
+
+        assert (res_lb.shape == res_ub.shape)
+        #assert torch.all(res_lb == res_ub)
+        return backsubstitute_upper(layer_nr - 1, res_lb, res_ub)
+
     
 
 
@@ -251,8 +400,22 @@ def analyze(
             rel_lbounds.append(lb_rel)
             rel_ubounds.append(ub_rel)
             assert torch.all(lb <= ub)
-        elif isinstance(layer, nn.Conv2d):
-            lb_rel, ub_rel = transform_conv2d(lb_rel, ub_rel, layer)
+        elif isinstance(layer, nn.Conv2d):  
+
+            lb_rel, ub_rel, weight, bias = transform_conv_rel(layer, input_shape = [28,28])
+
+            ub = torch.flatten(ub)
+            lb = torch.flatten(lb)
+
+            lb, ub = transform_conv(lb, ub, weight, bias)
+            assert torch.all(lb <= ub)
+
+            lb_1, ub_1 = backsubstitute_upper(0, lb_rel, ub_rel)
+            assert(torch.all(lb_1 <= ub_1))
+            assert torch.all(lb_1 -lb >=-0.01)
+            assert torch.all(ub -ub_1 >=-0.01)
+
+
         
         elif isinstance(layer, nn.ReLU):
             lb, ub, lb_rel, ub_rel = transform_relu_rel(lb_1, ub_1, lb_rel, ub_rel)
@@ -366,10 +529,17 @@ def main():
     pred_label = out.max(dim=1)[1].item()
     assert pred_label == true_label
 
+    #check how much time it takes to run the analysze function
+    start = time.time()
+    
+
     if analyze(net, image, eps, true_label):
         print("verified")
     else:
         print("not verified")
+    
+    end = time.time()
+    print("time: ", end - start)
 
 
 if __name__ == "__main__":
