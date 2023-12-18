@@ -34,6 +34,3 @@ conv_3,img7_cifar10_0.0124.txt,verified
 conv_4,img1_mnist_0.1851.txt,not verified
 conv_4,img7_mnist_0.1962.txt,verified
 conv_4,img8_mnist_0.2113.txt,verified
-
-
---net fc_1 --spec preliminary_evaluation_test_cases/fc_1/img1_mnist_0.0373.txt
