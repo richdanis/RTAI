@@ -1,299 +1,211 @@
 import torch
 import torch.nn as nn
 
-def transform_linear(lb_rel, ub_rel, weight, bias):
-        """
-        Propagate relational bounds through a linear layer.
-        """
-        neg_weights = torch.where(weight < 0, weight, torch.zeros_like(weight))
-        pos_weights = torch.where(weight > 0, weight, torch.zeros_like(weight))
-                                  
-        lb_res = pos_weights @ lb_rel + neg_weights @ ub_rel
-        ub_res = pos_weights @ ub_rel + neg_weights @ lb_rel
+class Bounds():
 
-        lb_res[:, -1] = lb_res[:, -1] + bias
-        ub_res[:, -1] = ub_res[:, -1] + bias
+        def __init__(self, lb_mat, ub_mat, lb_bias, ub_bias):
 
-        return lb_res, ub_res
+                # bounds for each layer
+                
+                self.lb_mat = lb_mat
+                self.ub_mat = ub_mat
 
-def matrix_matrix_mul_rel(lb_rel, ub_rel, weight, bias):
-    """
-    Propagate an abstract box through a matrix multiplication.
-    """
-    # Separate positive and negative parts of the weight
-    weight_pos = torch.where(weight > 0, weight, torch.zeros_like(weight))
-    weight_neg = torch.where(weight < 0, weight, torch.zeros_like(weight))
+                self.lb_bias = lb_bias
+                self.ub_bias = ub_bias
 
-    # Compute lower bound result
-    lb_res = torch.einsum('ij,jak->iak', weight_neg, ub_rel) + torch.einsum('ij,jak->iak', weight_pos, lb_rel)
-    lb_res[..., -1] += bias.unsqueeze(1)
+        def back(self, curr_bound):
 
-    # Compute upper bound result
-    ub_res = torch.einsum('ij,jak->iak', weight_neg, lb_rel) + torch.einsum('ij,jak->iak', weight_pos, ub_rel)
-    ub_res[..., -1] += bias.unsqueeze(1)
+                # backsubstitute curr_bound through layer
 
-    return lb_res, ub_res
+                curr_ub = curr_bound.ub_mat
+                curr_ub_bias = curr_bound.ub_bias
 
-def transform_conv2d(lb_rel, ub_rel, conv: nn.Conv2d):
-        """
-        Propagate relational bounds through a convolutional layer.
-        lb_rel shape: (in_channels, height, width, number_of_symbols)
-        """
-        assert len(lb_rel.shape) == 4
-        # get number of channels
+                pos_ub = torch.where(curr_ub > 0, curr_ub, torch.zeros_like(curr_ub))
+                neg_ub = torch.where(curr_ub < 0, curr_ub, torch.zeros_like(curr_ub))
+
+                res_ub = pos_ub @ self.ub_mat + neg_ub @ self.lb_mat
+                res_ub_bias = pos_ub @ self.ub_bias + neg_ub @ self.lb_bias + curr_ub_bias
+
+                curr_lb = curr_bound.lb_mat
+                curr_lb_bias = curr_bound.lb_bias
+
+                pos_lb = torch.where(curr_lb > 0, curr_lb, torch.zeros_like(curr_lb))
+                neg_lb = torch.where(curr_lb < 0, curr_lb, torch.zeros_like(curr_lb))
+
+                res_lb = pos_lb @ self.lb_mat + neg_lb @ self.ub_mat
+                res_lb_bias = pos_lb @ self.lb_bias + neg_lb @ self.ub_bias + curr_lb_bias
+
+                return Bounds(res_lb, res_ub, res_lb_bias, res_ub_bias)
+        
+class ReLU_Bounds():
+
+        def __init__(self, lb, ub, neg_slope, alpha):
+
+                # special class for ReLUs as we need to update
+                # the alpha parameter during backsubstitution
+
+                self.neg_slope = neg_slope
+                self.alpha = alpha
+                self.lb = lb
+                self.ub = ub
+                self.lb_mat = None
+                self.ub_mat = None
+                self.lb_bias = None
+                self.ub_bias = None
+
+        def get_bounds(self):
+
+                # clamp back alpha to valid range
+                with torch.no_grad():
+                        if self.neg_slope < 1.0:
+                                self.alpha.clamp_(self.neg_slope, 1)
+                        else:
+                                self.alpha.clamp_(1, self.neg_slope)
+
+                # masks
+                crossing = torch.logical_and(self.ub > 0, self.lb < 0)
+                pos = self.lb > 0
+                neg = self.ub <= 0
+
+                # default weights
+                ones = torch.where(pos, torch.ones_like(self.lb), torch.zeros_like(self.lb))
+                neg_ones = torch.where(neg, self.neg_slope * torch.ones_like(self.lb), torch.zeros_like(self.lb))
+
+                if self.neg_slope < 1.0:
+
+                        # compute upper slope and bias
+                        upper_slope = torch.where(crossing, (self.ub - self.neg_slope*self.lb) / (self.ub - self.lb), torch.zeros_like(self.lb))
+                        weight_ub = torch.diag(ones + neg_ones + upper_slope)
+                        bias_ub = torch.where(crossing, self.ub * self.lb * (self.neg_slope - 1) / (self.ub - self.lb), torch.zeros_like(self.lb))
+
+                        # compute lower slope and bias
+                        lower_slope = torch.where(crossing, self.alpha, torch.zeros_like(self.lb))
+                        weight_lb = torch.diag(ones + neg_ones + lower_slope)
+                        bias_lb = torch.zeros_like(self.lb)
+
+                        #return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
+                        self.lb_mat = weight_lb
+                        self.ub_mat = weight_ub
+
+                        self.lb_bias = bias_lb
+                        self.ub_bias = bias_ub
+
+                elif self.neg_slope > 1.0:
+
+                        # compute lower slope and bias
+                        lower_slope = torch.where(crossing, (self.ub - self.neg_slope*self.lb) / (self.ub - self.lb), torch.zeros_like(self.lb))
+                        weight_lb = torch.diag(ones + neg_ones + lower_slope)
+                        bias_lb = torch.where(crossing, self.ub * self.lb * (self.neg_slope - 1) / (self.ub - self.lb), torch.zeros_like(self.lb))
+
+                        # compute upper slope and bias
+                        upper_slope = torch.where(crossing, self.alpha, torch.zeros_like(self.lb))
+                        weight_ub = torch.diag(ones + neg_ones + upper_slope)
+                        bias_ub = torch.zeros_like(self.lb)
+
+                        #return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
+                        self.lb_mat = weight_lb
+                        self.ub_mat = weight_ub
+
+                        self.lb_bias = bias_lb
+                        self.ub_bias = bias_ub
+
+        def back(self, curr_bound):
+
+                # get new bounds using updated alpha
+
+                #prev_bound = self.get_bounds()
+
+                self.get_bounds()
+
+                # perform backsubstitution
+
+                #return prev_bound.back(curr_bound)
+                return Bounds(self.lb_mat, self.ub_mat, self.lb_bias, self.ub_bias).back(curr_bound)
+
+def transform_linear(weight, bias):
+
+        return Bounds(weight, weight, bias, bias)
+
+def transform_conv2d(conv, shape):
+
         out_channels = conv.weight.shape[0]
         kernel_size = conv.weight.shape[2]
         stride = conv.stride[0]
         padding = conv.padding[0]
 
         # compute output shape
-        out_height = (lb_rel.shape[1] + 2 * padding - kernel_size) // stride + 1
-        out_width = (lb_rel.shape[2] + 2 * padding - kernel_size) // stride + 1
-        out_shape = (out_channels, out_height, out_width, lb_rel.shape[-1])
-
-        # index array
-        shape = torch.tensor(lb_rel.shape)
-        num_ind = shape[:-1].prod()
-        ind = torch.arange(0, num_ind, dtype=torch.float)
-        ind = ind.reshape(lb_rel.shape[:-1])
-
-        # unfold index array
-        ind = torch.nn.functional.unfold(ind, (kernel_size, kernel_size), stride=stride, padding=padding)
-        # change to int
-        ind = ind.long()
+        out_height = (shape[1] + 2 * padding - kernel_size) // stride + 1
+        out_width = (shape[2] + 2 * padding - kernel_size) // stride + 1
+        out_shape = (out_channels, out_height, out_width)
 
-        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
+        # create input matrix
+        inputs = torch.eye(shape[0] * shape[1] * shape[2])
 
-        # flatten input
-        lb_unfold = lb_rel[ind]
-        ub_unfold = ub_rel[ind]
+        # create index matrix
+        index = torch.arange(inputs.shape[0], dtype=torch.float).view(shape)
 
-        # get weight and bias
-        w = conv.weight
-        w = w.view(w.shape[0], -1)
-        # w is now of shape (out_channels, in_channels * kernel_size * kernel_size)
-        b = conv.bias
-        # b is of shape (out_channels,)
+        # unfold index
+        index = nn.functional.unfold(index, kernel_size, padding=padding, stride=stride)
+        index = index.long()
 
-        # pass weight, bias and lb_unfold input through linear layer
-        # issue here is that we have a matrix matrix multiplication and not a matrix vector multiplication
-        lb_res, ub_res = matrix_matrix_mul_rel(lb_unfold, ub_unfold, w, b)
-        assert len(lb_res.shape) == 3
-        # reshape to output shape
-        lb_res = lb_res.view(out_shape)
-        ub_res = ub_res.view(out_shape)
+        # unfold input
+        inputs = inputs[index]
 
-        return lb_res, ub_res
+        # flatten weights
+        weights = conv.weight.view(out_channels, -1)
+        bias = conv.bias
 
-def transform_ReLU(lb_rel, ub_rel, lb, ub):
-        """
-        Propagate relational bounds through a ReLU layer.
-        lb_rel  and ub_rel of shape = ([50, 785]) (batch_size, number_of_symbols + 1)
-        lb and ub of shape = ([50]) (batch_size)
+        # compute matrix
+        mat = torch.einsum('ij,jak->iak', weights, inputs)
+        bias = bias.unsqueeze(1)
+        bias = bias.expand(-1, mat.shape[1]).contiguous()
+        bias = bias.view(-1)
+        mat = mat.view(-1, mat.shape[-1])
 
-        """
-        in_shape = lb_rel.shape
-        in_shape_lb = lb.shape
-        #check that lb and lb_rel have same batch size
-        assert(in_shape[0]== in_shape_lb[0])
-        #asssert that lb is smaller than ub
-        assert(torch.all(lb <= ub))
+        return Bounds(mat, mat, bias, bias), out_shape
 
-        upper_slope = ub / (ub - lb)
-        offset = upper_slope * lb
-        offset = offset.flatten()
+def update_ReLUs(bounds, init_lb, init_ub):
 
-        ub_res = upper_slope.unsqueeze(-1) * ub_rel
+        # update ReLU bounds
 
-        # flatten ub, ub_rel
-        ub = ub.flatten(start_dim=0)
-        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-        ub_res = ub_res.flatten(start_dim=0, end_dim=-2)
+        for i in range(len(bounds)):
 
-        # flatten lb, lb_rel
-        lb = lb.flatten(start_dim=0)
-        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-        lb_res = lb_rel.flatten(start_dim=0, end_dim=-2)
+                if isinstance(bounds[i], ReLU_Bounds):
 
-        ub_res[:,-1] = ub_res[:,-1] - offset
+                        # get new lb, ub
+                        curr_bounds = back(bounds[:i].copy())
+                        lb, ub = eval(curr_bounds, init_lb, init_ub)
 
-        lb_res[:,:] = 0
+                        # update ReLU
+                        bounds[i].lb = lb
+                        bounds[i].ub = ub
+                        
+                        # update bounds
+                        bounds[i].get_bounds()
 
-        lb_res[ub < 0,:] = 0
-        ub_res[ub < 0,:] = 0
+def back(bounds):
 
-        ub_res[lb > 0,:] = ub_rel[lb > 0,:]
-        lb_res[lb > 0,:] = lb_rel[lb > 0,:]
+        # backsubstitute bounds through network
 
-        lb_res = lb_res.view(in_shape)
-        ub_res = ub_res.view(in_shape)
+        curr_bound = bounds.pop()
 
-        return lb_res, ub_res
+        while bounds:
 
-def transform_ReLU_alpha_v2(lb_rel, ub_rel, lb, ub, alpha):
+                curr_bound = bounds.pop().back(curr_bound)
 
-        in_shape = lb_rel.shape
+        return curr_bound
 
-        lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-        ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-        lb = lb.flatten(start_dim=0)
-        ub = ub.flatten(start_dim=0)
-        alpha = alpha.flatten()
+def eval(bound, init_lb, init_ub):
 
-        crossing = torch.logical_and(ub > 0, lb < 0)
-        pos = lb > 0
+        # evaluate bounds on initial box
 
-        ones = torch.where(pos, torch.ones_like(lb), torch.zeros_like(lb))
+        pos_ub = torch.where(bound.ub_mat > 0, bound.ub_mat, torch.zeros_like(bound.ub_mat))
+        neg_ub = torch.where(bound.ub_mat < 0, bound.ub_mat, torch.zeros_like(bound.ub_mat))
 
-        upper_slope = torch.where(crossing, ub / (ub - lb), torch.zeros_like(lb))
-        lower_slope = torch.where(crossing, alpha, torch.zeros_like(lb))
-        
-        offset_ub = torch.where(crossing, -ub * lb / (ub - lb), torch.zeros_like(lb))
+        pos_lb = torch.where(bound.lb_mat > 0, bound.lb_mat, torch.zeros_like(bound.lb_mat))
+        neg_lb = torch.where(bound.lb_mat < 0, bound.lb_mat, torch.zeros_like(bound.lb_mat))
 
-        weight_lb = torch.diag(ones + lower_slope)
-        weight_ub = torch.diag(ones + upper_slope)
+        ub = pos_ub @ init_ub + neg_ub @ init_lb + bound.ub_bias
+        lb = pos_lb @ init_lb + neg_lb @ init_ub + bound.lb_bias
 
-        lb_res = weight_lb @ lb_rel
-        ub_res = weight_ub @ ub_rel
-
-        ub_res[:,-1] = ub_res[:,-1] + offset_ub
-
-        return lb_res.view(in_shape), ub_res.view(in_shape)
-
-
-def transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
-
-        in_shape = lb_rel.shape
-
-        if slope == 1.0:
-
-                return lb_rel, ub_rel
-        
-        elif slope < 1.0:
-
-                # compute upper slope and offset
-                upper_slope = (ub - slope*lb) / (ub - lb)
-                upper_slope = upper_slope.unsqueeze(-1)
-
-                offset = ub * lb * (slope - 1) / (ub - lb)
-                offset = offset.flatten(start_dim=0)
-
-                # default upper and lower bound
-                # maybe add offset only to constant?!
-                ub_res = upper_slope * ub_rel
-                lb_res = slope * lb_rel
-
-                # flatten
-                ub = ub.flatten(start_dim=0)
-                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-                ub_res = ub_res.flatten(start_dim=0, end_dim=-2)
-
-                lb = lb.flatten(start_dim=0)
-                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-                lb_res = lb_res.flatten(start_dim=0, end_dim=-2)
-
-                # add offset
-                ub_res[:,-1] = ub_res[:,-1] + offset
-                
-                # when not crossing
-                ub_res[ub < 0,:] = slope * ub_rel[ub < 0,:]
-                lb_res[ub < 0,:] = slope * lb_rel[ub < 0,:]
-
-                lb_res[lb > 0,:] = lb_rel[lb > 0,:]
-                ub_res[lb > 0,:] = ub_rel[lb > 0,:]
-                
-
-                return lb_res.view(in_shape), ub_res.view(in_shape)
-
-        elif slope > 1.0:
-
-                # compute upper slope and offset
-                lower_slope = (ub - slope*lb) / (ub - lb)
-                lower_slope = lower_slope.unsqueeze(-1)
-
-                offset = ub * lb * (slope - 1) / (ub - lb)
-                offset = offset.flatten(start_dim=0)
-                
-                # default upper and lower bound
-                ub_res = slope * ub_rel
-                lb_res = lower_slope * lb_rel
-
-                # flatten
-                ub = ub.flatten(start_dim=0)
-                ub_rel = ub_rel.flatten(start_dim=0, end_dim=-2)
-                ub_res = ub_res.flatten(start_dim=0, end_dim=-2)
-
-                lb = lb.flatten(start_dim=0)
-                lb_rel = lb_rel.flatten(start_dim=0, end_dim=-2)
-                lb_res = lb_res.flatten(start_dim=0, end_dim=-2)
-
-                # add offset
-                lb_res[:,-1] = lb_res[:,-1] + offset
-                
-                # when not crossing
-                ub_res[ub < 0,:] = slope * ub_rel[ub < 0,:]
-                lb_res[ub < 0,:] = slope * lb_rel[ub < 0,:]
-
-                lb_res[lb > 0,:] = lb_rel[lb > 0,:]
-                ub_res[lb > 0,:] = ub_rel[lb > 0,:]
-
-                return lb_res.view(in_shape), ub_res.view(in_shape)
-
-def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
-
-        # init_lb: (1, 28, 28) or (3, 32, 32)
-        
-        init_lb = init_lb.view((-1,))
-        init_ub = init_ub.view((-1,))
-
-        out_shape = lb_rel.shape[:-1]
-
-        lb_rel = lb_rel.view((-1, lb_rel.shape[-1]))
-        ub_rel = ub_rel.view((-1, ub_rel.shape[-1]))
-
-        neg_lb = torch.where(lb_rel < 0, lb_rel, torch.zeros_like(lb_rel))
-        pos_lb = torch.where(lb_rel > 0, lb_rel, torch.zeros_like(lb_rel))
-
-        neg_ub = torch.where(ub_rel < 0, ub_rel, torch.zeros_like(ub_rel))
-        pos_ub = torch.where(ub_rel > 0, ub_rel, torch.zeros_like(ub_rel))
-
-        lb_res = neg_lb[:,:-1] @ init_ub + pos_lb[:,:-1] @ init_lb
-        ub_res = neg_ub[:,:-1] @ init_lb + pos_ub[:,:-1] @ init_ub
-
-        lb_res = lb_res + lb_rel[:,-1]
-        ub_res = ub_res + ub_rel[:,-1]
-
-        return lb_res.view(out_shape), ub_res.view(out_shape)
-
-def differences(init_lb, init_ub, lb_rel, ub_rel, true_label):
-        
-        init_lb = init_lb.view((-1,))
-        init_ub = init_ub.view((-1,))
-
-        mat = -1 *torch.eye(10)
-        mat[:,true_label] = 1
-        mat[true_label,:] = 0
-
-        diff_lb, diff_ub = transform_linear(lb_rel, ub_rel, mat, torch.zeros_like((mat[:,0])))
-
-        #neg_mat = torch.where(mat < 0, mat, torch.zeros_like(mat))
-        #pos_mat = torch.where(mat > 0, mat, torch.zeros_like(mat))
-
-        #differences_lb = neg_mat @ ub_rel + pos_mat @ lb_rel
-
-        lb, _ = evaluate_bounds(init_lb, init_ub, diff_lb, diff_lb)
-
-        return lb
-
-        #weight = differences_lb[:,:-1]
-        #bias = differences_lb[:,-1]
-
-        # lower bounds of differences must be positive
-        #neg_weight = torch.where(weight < 0, weight, torch.zeros_like(weight))
-        #pos_weight = torch.where(weight > 0, weight, torch.zeros_like(weight))
-
-        #numerical_diff = neg_weight @ init_ub + pos_weight @ init_lb
-        #numerical_diff = numerical_diff + bias
- 
-        #return numerical_diff
+        return lb, ub
