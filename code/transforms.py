@@ -310,7 +310,7 @@ def torch_conv_layer_to_affine(
                             enc_tuple((ci, xi0 + xd, yi0 + yd), in_shape),
                         ] = cw
 
-    return fc
+    return fc, out_shape
 
 def range2d(to_a, to_b):
     for a in range(to_a):
@@ -341,7 +341,7 @@ def dec_tuple(x: int, shape: Tuple) -> Tuple:
 
 def transform_conv_rel(layer, input_shape):
 
-        fc = torch_conv_layer_to_affine(layer, input_shape)
+        fc, out_shape = torch_conv_layer_to_affine(layer, input_shape)
         # FC(flatten(img)) == flatten(Conv(img))
 
         weight = fc.weight
@@ -351,7 +351,7 @@ def transform_conv_rel(layer, input_shape):
         ub_rel = torch.cat((weight, bias.unsqueeze(-1)), dim=-1)
 
 
-        return lb_rel, ub_rel, weight, bias
+        return lb_rel, ub_rel, weight, bias, out_shape
 
 
 def transform_conv(lb, ub, weight, bias):

@@ -72,7 +72,7 @@ def torch_conv_layer_to_affine(
                             enc_tuple((ci, xi0 + xd, yi0 + yd), in_shape),
                         ] = cw
 
-    return fc
+    return fc, out_shape
 
 
 def range2d(to_a, to_b):
@@ -150,24 +150,32 @@ def main():
     #set input to no_grad:
     inputs.requires_grad = False
 
+    input_sizes = [(1,28, 28)]
 
-    conv = net[0]   
+    for i in range(2):
+        conv = net[i]
+        
+        
+        img = image.clone()
+        if i==1:
+            img = net[0](img)
+
+        fc, out_shape = torch_conv_layer_to_affine(conv, input_sizes[-1][1:])
+        input_sizes.append(out_shape)
+        res1 = fc(img.reshape((-1))).reshape(conv(img).shape)
+        res2 = conv(img)
+        worst_error = (res1 - res2).max()
+
+        print("Output shape", res2.shape, "Worst error: ", float(worst_error))
+        assert worst_error <= 1.0e-6
+
+
     
-    # Assume the input size is (1,28, 28)
-    input_size = (1,28, 28)
+    
 
-    #img = torch.rand((1, 2, 6, 7))
-    img = image.clone()
-    fc = torch_conv_layer_to_affine(conv, img.shape[1:])
 
-    # Also checks that our encoding flattens the inputs/outputs such that
-    # FC(flatten(img)) == flatten(Conv(img))
-    res1 = fc(img.reshape((-1))).reshape(conv(img).shape)
-    res2 = conv(img)
-    worst_error = (res1 - res2).max()
 
-    print("Output shape", res2.shape, "Worst error: ", float(worst_error))
-    assert worst_error <= 1.0e-6
+
     
 
     return 0
