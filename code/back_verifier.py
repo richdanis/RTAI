@@ -76,31 +76,33 @@ def analyze(
     
     optimizer = None
     if alphas:
-        optimizer = torch.optim.Adam(alphas, lr=0.1)
+        optimizer = torch.optim.Adam(alphas, lr=0.3)
 
     iterations = 0
 
     while not verified:
         
         # CHECK VERIFICATION
+        update_ReLUs(bounds, init_lb, init_ub)
         bound = back(bounds.copy())
         lb, _ = eval(bound, init_lb, init_ub)
         verified = (lb.min() >= 0)
 
-        if iterations % 5 == 0:
-            print(lb)
-
-        if not alphas:
+        if not alphas or verified:
             return int(verified)
+
+        print(lb)
 
         # BACKWARD PASS
         optimizer.zero_grad()
-        loss = -lb.min()
-        loss.backward(retain_graph=True)
+        # relu of lb
+        lb = torch.nn.functional.relu(lb)
+        loss = -lb.sum()
+        loss.backward()
         optimizer.step()
 
         iterations += 1
-        if iterations > 100:
+        if iterations > 6:
             break
 
     return int(verified)

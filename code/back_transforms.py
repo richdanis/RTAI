@@ -83,7 +83,12 @@ class ReLU_Bounds():
                         weight_lb = torch.diag(ones + neg_ones + lower_slope)
                         bias_lb = torch.zeros_like(self.lb)
 
-                        return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
+                        #return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
+                        self.lb_mat = weight_lb
+                        self.ub_mat = weight_ub
+
+                        self.lb_bias = bias_lb
+                        self.ub_bias = bias_ub
 
                 elif self.neg_slope > 1.0:
 
@@ -97,17 +102,25 @@ class ReLU_Bounds():
                         weight_ub = torch.diag(ones + neg_ones + upper_slope)
                         bias_ub = torch.zeros_like(self.lb)
 
-                        return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
+                        #return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
+                        self.lb_mat = weight_lb
+                        self.ub_mat = weight_ub
+
+                        self.lb_bias = bias_lb
+                        self.ub_bias = bias_ub
 
         def back(self, curr_bound):
 
                 # get new bounds using updated alpha
 
-                prev_bound = self.get_bounds()
+                #prev_bound = self.get_bounds()
+
+                self.get_bounds()
 
                 # perform backsubstitution
 
-                return prev_bound.back(curr_bound)
+                #return prev_bound.back(curr_bound)
+                return Bounds(self.lb_mat, self.ub_mat, self.lb_bias, self.ub_bias).back(curr_bound)
 
 def transform_linear(weight, bias):
 
@@ -167,11 +180,8 @@ def update_ReLUs(bounds, init_lb, init_ub):
                         bounds[i].lb = lb
                         bounds[i].ub = ub
                         
-                        # get new bounds
-                        new_bound = bounds[i].get_bounds()
-                        
                         # update bounds
-                        bounds[i] = new_bound
+                        bounds[i].get_bounds()
 
 def back(bounds):
 
