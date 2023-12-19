@@ -249,25 +249,25 @@ def analyze(
                 rel_lb[i] += bias
                 #rel_ub[i] = torch.matmul(init_ub_temp, coeffs) + bias
 
-            #Chris stuff 
-            coeffs_lb_bool= coeffs <0 
-            coeff_upp_bool= not coeffs_lb_bool
+            # #Chris stuff 
+            # coeffs_lb_bool= coeffs <0 
+            # coeff_upp_bool= not coeffs_lb_bool
             
-            coeffs_lb_bool= int(coeffs_lb_bool)
-            coeff_upp_bool= int(coeff_upp_bool)
-            # True -> 1 , False ->0
+            # coeffs_lb_bool= int(coeffs_lb_bool)
+            # coeff_upp_bool= int(coeff_upp_bool)
+            # # True -> 1 , False ->0
             
-            res= torch.multiply(init_lb_temp,coeffs_lb_bool)+ torch.multiply(init_ub_temp,coeff_upp_bool)
-            res = torch.sum(res, dim=0)
-            res= res+bias
+            # res= torch.multiply(init_lb_temp,coeffs_lb_bool)+ torch.multiply(init_ub_temp,coeff_upp_bool)
+            # res = torch.sum(res, dim=0)
+            # res= res+bias
             
-            print(res, "res matrix operation")
-            print(res_lb, "for loop")
+            # print(res, "res matrix operation")
+            # print(res_lb, "for loop")
             
-            if res== res_lb:
-                print("success")
+            # if res== res_lb:
+            #     print("success")
             
-            assert False
+            # assert False
 
 
             for i in range(res_ub.shape[0]):
@@ -609,7 +609,7 @@ def analyze(
 
                 lb_rel, ub_rel = transform_linear_rel( layer.weight, layer.bias)
             
-                lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
+                lb_1, ub_1 = backsubstitute_upper_nonsparse(layer_nr, lb_rel, ub_rel)
 
                 assert torch.all(lb <= ub)
                 #assert torch.all(lb_1 -lb >=-0.01)
@@ -640,7 +640,7 @@ def analyze(
             lb, ub = transform_conv(lb, ub, weight, bias)
             assert torch.all(lb <= ub)
 
-            lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
+            lb_1, ub_1 = backsubstitute_upper_nonsparse(layer_nr, lb_rel, ub_rel)
             assert(torch.all(lb_1 <= ub_1))
             assert torch.all(lb_1 -lb >=-0.01)
             assert torch.all(ub -ub_1 >=-0.01)
