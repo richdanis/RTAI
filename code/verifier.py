@@ -229,6 +229,7 @@ def analyze(
             rel_lb = torch.zeros(res_lb.shape[0])
             rel_ub = torch.zeros(res_ub.shape[0])
 
+            start_time = time.time()
 
             for i in range(res_lb.shape[0]):
                 init_lb_temp = init_lb.clone()
@@ -248,6 +249,51 @@ def analyze(
                 rel_lb[i] = torch.matmul(init_lb_temp, coeffs)
                 rel_lb[i] += bias
                 #rel_ub[i] = torch.matmul(init_ub_temp, coeffs) + bias
+            
+            end_time= time.time()
+            
+            start_time_2= time.time()
+            
+            init_lb_temp = init_lb.clone()
+            init_ub_temp = init_ub.clone()
+            coeffs_new= res_lb[:,:-1]   
+            bias_fast= res_lb[:,-1]
+            
+            coeffs_bool_low = coeffs_new<0 
+            coeffs_bool_up  = coeffs_new>0
+                       
+            coeffs_bool_low= coeffs_bool_low.int()    
+            coeffs_bool_up = coeffs_bool_up.int()
+            
+            init_lb_temp = torch.unsqueeze(init_lb_temp, dim=0)
+            init_ub_temp = torch.unsqueeze(init_ub_temp, dim=0)
+
+# Use expand or repeat to replicate the vector along the new dimension
+            init_lb_temp = init_lb_temp.expand(res_lb.shape[0], -1)
+            init_ub_temp = init_ub_temp.expand(res_lb.shape[0], -1)
+            
+            low= torch.multiply(init_ub_temp, coeffs_bool_low)
+            up = torch.multiply(init_lb_temp, coeffs_bool_up)
+            
+            matrix = low+up #100x784
+            
+            #selected_rows_coeff = torch.index_select(coeffs_new, dim=0)
+            res= torch.einsum("ij,ji->i",matrix, coeffs_new.T)
+           
+            #res = torch.matmul(matrix, selected_rows_coeff) #should have shape 100x1 but 100x784 @ 100x784 -> 100x1
+            res = res+bias_fast   #100x1
+            end_time_2= time.time()
+            
+            if torch.allclose(res,rel_lb):
+                print("success")
+                diff= end_time-start_time
+                diff_2= end_time_2- start_time_2
+                print(f'duration old approach {diff}, duration with matrix operation {diff_2}')
+                print(f'increase {diff/diff_2} times')
+            else:
+                print("fail")
+            
+            assert False
 
             # #Chris stuff 
             # coeffs_lb_bool= coeffs <0 
