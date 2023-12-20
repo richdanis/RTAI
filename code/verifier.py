@@ -250,6 +250,26 @@ def analyze(
                 rel_lb[i] += bias
                 #rel_ub[i] = torch.matmul(init_ub_temp, coeffs) + bias
             
+
+            for i in range(res_ub.shape[0]):
+                init_lb_temp = init_lb.clone()
+                init_ub_temp = init_ub.clone()
+                coeffs = res_ub[i, :-1]
+                bias = res_ub[i, -1]
+
+                # #TODO Exchange j-th entry of init_ub with jth entry of init_lb if  jth entry of coeffs is negative
+                # for j in range(coeffs.shape[0]):
+                #     if coeffs[j] < 0:
+                #         init_ub_temp[j], init_lb_temp[j] = init_lb_temp[j].clone(), init_ub_temp[j].clone()
+                negative_coeffs_mask = coeffs < 0
+                init_ub_temp[negative_coeffs_mask], init_lb_temp[negative_coeffs_mask] = init_lb_temp[negative_coeffs_mask].clone(), init_ub_temp[negative_coeffs_mask].clone()
+                    
+                #compute the i-th entry of the tensor res_ub and res_lb
+                rel_ub[i] = torch.matmul(init_ub_temp, coeffs) + bias
+
+            assert (rel_lb.shape == rel_ub.shape)
+            assert torch.all(rel_lb <= rel_ub)
+            
             end_time= time.time()
             
             start_time_2= time.time()
@@ -272,68 +292,29 @@ def analyze(
             init_lb_temp = init_lb_temp.expand(res_lb.shape[0], -1)
             init_ub_temp = init_ub_temp.expand(res_lb.shape[0], -1)
             
-            low= torch.multiply(init_ub_temp, coeffs_bool_low)
-            up = torch.multiply(init_lb_temp, coeffs_bool_up)
+            low_lb= torch.multiply(init_ub_temp, coeffs_bool_low)
+            up_lb = torch.multiply(init_lb_temp, coeffs_bool_up)
             
-            matrix = low+up #100x784
+            low_ub= torch.multiply(init_lb_temp, coeffs_bool_low)
+            up_ub = torch.multiply(init_ub_temp, coeffs_bool_up)
+            
+            matrix_lb = low_lb+up_lb #100x784
+            matrix_ub = low_ub+ up_ub
             
             #selected_rows_coeff = torch.index_select(coeffs_new, dim=0)
-            res= torch.einsum("ij,ji->i",matrix, coeffs_new.T)
+            res_lb= torch.einsum("ij,ji->i",matrix_lb, coeffs_new.T)
+            res_ub= torch.einsum("ij,ji->i",matrix_ub, coeffs_new.T)
            
             #res = torch.matmul(matrix, selected_rows_coeff) #should have shape 100x1 but 100x784 @ 100x784 -> 100x1
-            res = res+bias_fast   #100x1
+            res_lb = res_lb+bias_fast   #100x1
+            res_ub = res_ub+bias_fast
+            
             end_time_2= time.time()
             
-            if torch.allclose(res,rel_lb):
-                print("success")
-                diff= end_time-start_time
-                diff_2= end_time_2- start_time_2
-                print(f'duration old approach {diff}, duration with matrix operation {diff_2}')
-                print(f'increase {diff/diff_2} times')
-            else:
-                print("fail")
-            
+            diff =end_time-start_time
+            diff_2= end_time_2-start_time_2
+            print(f'update is {diff/diff_2} times faster')
             assert False
-
-            # #Chris stuff 
-            # coeffs_lb_bool= coeffs <0 
-            # coeff_upp_bool= not coeffs_lb_bool
-            
-            # coeffs_lb_bool= int(coeffs_lb_bool)
-            # coeff_upp_bool= int(coeff_upp_bool)
-            # # True -> 1 , False ->0
-            
-            # res= torch.multiply(init_lb_temp,coeffs_lb_bool)+ torch.multiply(init_ub_temp,coeff_upp_bool)
-            # res = torch.sum(res, dim=0)
-            # res= res+bias
-            
-            # print(res, "res matrix operation")
-            # print(res_lb, "for loop")
-            
-            # if res== res_lb:
-            #     print("success")
-            
-            # assert False
-
-
-            for i in range(res_ub.shape[0]):
-                init_lb_temp = init_lb.clone()
-                init_ub_temp = init_ub.clone()
-                coeffs = res_ub[i, :-1]
-                bias = res_ub[i, -1]
-
-                # #TODO Exchange j-th entry of init_ub with jth entry of init_lb if  jth entry of coeffs is negative
-                # for j in range(coeffs.shape[0]):
-                #     if coeffs[j] < 0:
-                #         init_ub_temp[j], init_lb_temp[j] = init_lb_temp[j].clone(), init_ub_temp[j].clone()
-                negative_coeffs_mask = coeffs < 0
-                init_ub_temp[negative_coeffs_mask], init_lb_temp[negative_coeffs_mask] = init_lb_temp[negative_coeffs_mask].clone(), init_ub_temp[negative_coeffs_mask].clone()
-                    
-                #compute the i-th entry of the tensor res_ub and res_lb
-                rel_ub[i] = torch.matmul(init_ub_temp, coeffs) + bias
-
-            assert (rel_lb.shape == rel_ub.shape)
-            assert torch.all(rel_lb <= rel_ub)
         
             return rel_lb, rel_ub
 
