@@ -4,7 +4,7 @@ import torch.nn as nn
 
 from networks import get_network
 from utils.loading import parse_spec
-from code.transforms import *
+from transforms import *
 
 DEVICE = "cpu"
 

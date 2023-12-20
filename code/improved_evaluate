@@ -9,9 +9,9 @@ do
   case=${array[1]}
   label=${array[2]}
   # only if net contains "conv" at beginning
-  if [[ $net != conv* ]]; then
+  if [[ $net != fc* ]]; then
     continue
   fi
   echo ${net} ${case} ${label}
-  python code/back_verifier.py --net ${net} --spec test_cases/${net}/${case}  
+  python code/verifier.py --net ${net} --spec test_cases/${net}/${case}  
 done < test_cases/gt.txt

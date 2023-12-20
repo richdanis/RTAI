@@ -146,6 +146,8 @@ def transform_conv2d(conv, shape):
 
         # unfold index
         index = nn.functional.unfold(index, kernel_size, padding=padding, stride=stride)
+        # round index to nearest integer
+        index = torch.round(index)
         index = index.long()
 
         # unfold input
