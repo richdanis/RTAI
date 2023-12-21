@@ -426,7 +426,6 @@ def analyze(
         else:
             print("Fuck")
         
-        assert False
         assert (res_lb.shape == res_ub.shape)
         #assert torch.all(res_lb == res_ub)
         return backsubstitute_upper_nonsparse(layer_nr - 1, res_lb, res_ub)
