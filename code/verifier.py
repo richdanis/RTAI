@@ -226,58 +226,14 @@ def analyze(
 
         #Seems to work for layer_nr = 0 -> Box bounds are the same as backsubstituted relational bounds
         if layer_nr == 0:
-            rel_lb = torch.zeros(res_lb.shape[0])
-            rel_ub = torch.zeros(res_ub.shape[0])
-
-            start_time = time.time()
-
-            for i in range(res_lb.shape[0]):
-                init_lb_temp = init_lb.clone()
-                init_ub_temp = init_ub.clone()
-                coeffs = res_lb[i, :-1]
-                bias = res_lb[i, -1]
-
-                # #TODO Exchange j-th entry of init_ub with jth entry of init_lb if  jth entry of coeffs is negative
-                # for j in range(coeffs.shape[0]):
-                #     if coeffs[j] < 0:
-                #         init_ub_temp[j], init_lb_temp[j] = init_lb_temp[j].clone(), init_ub_temp[j].clone()
-                    
-                negative_coeffs_mask = coeffs < 0
-                init_ub_temp[negative_coeffs_mask], init_lb_temp[negative_coeffs_mask] = init_lb_temp[negative_coeffs_mask].clone(), init_ub_temp[negative_coeffs_mask].clone()
-                #compute the i-th entry of the tensor res_ub and res_lb
-                
-                rel_lb[i] = torch.matmul(init_lb_temp, coeffs)
-                rel_lb[i] += bias
-                #rel_ub[i] = torch.matmul(init_ub_temp, coeffs) + bias
-            
-
-            for i in range(res_ub.shape[0]):
-                init_lb_temp = init_lb.clone()
-                init_ub_temp = init_ub.clone()
-                coeffs = res_ub[i, :-1]
-                bias = res_ub[i, -1]
-
-                # #TODO Exchange j-th entry of init_ub with jth entry of init_lb if  jth entry of coeffs is negative
-                # for j in range(coeffs.shape[0]):
-                #     if coeffs[j] < 0:
-                #         init_ub_temp[j], init_lb_temp[j] = init_lb_temp[j].clone(), init_ub_temp[j].clone()
-                negative_coeffs_mask = coeffs < 0
-                init_ub_temp[negative_coeffs_mask], init_lb_temp[negative_coeffs_mask] = init_lb_temp[negative_coeffs_mask].clone(), init_ub_temp[negative_coeffs_mask].clone()
-                    
-                #compute the i-th entry of the tensor res_ub and res_lb
-                rel_ub[i] = torch.matmul(init_ub_temp, coeffs) + bias
-
-            assert (rel_lb.shape == rel_ub.shape)
-            assert torch.all(rel_lb <= rel_ub)
-            
-            end_time= time.time()
-            
-            start_time_2= time.time()
             
             init_lb_temp = init_lb.clone()
             init_ub_temp = init_ub.clone()
             coeffs_new= res_lb[:,:-1]   
             bias_fast= res_lb[:,-1]
+            
+            print(coeffs_new.shape, "coeffs_new")
+            print(init_lb_temp.shape, "init_lb_temp")
             
             coeffs_bool_low = coeffs_new<0 
             coeffs_bool_up  = coeffs_new>0
@@ -287,8 +243,9 @@ def analyze(
             
             init_lb_temp = torch.unsqueeze(init_lb_temp, dim=0)
             init_ub_temp = torch.unsqueeze(init_ub_temp, dim=0)
-
-# Use expand or repeat to replicate the vector along the new dimension
+            
+            print(init_lb_temp.shape, "init_lb_temp second")
+            # Use expand or repeat to replicate the vector along the new dimension
             init_lb_temp = init_lb_temp.expand(res_lb.shape[0], -1)
             init_ub_temp = init_ub_temp.expand(res_lb.shape[0], -1)
             
@@ -301,25 +258,18 @@ def analyze(
             matrix_lb = low_lb+up_lb #100x784
             matrix_ub = low_ub+ up_ub
             
-            #selected_rows_coeff = torch.index_select(coeffs_new, dim=0)
+            #should have shape 100x1 but 100x784 @ 100x784 -> 100x1
             res_lb= torch.einsum("ij,ji->i",matrix_lb, coeffs_new.T)
             res_ub= torch.einsum("ij,ji->i",matrix_ub, coeffs_new.T)
            
-            #res = torch.matmul(matrix, selected_rows_coeff) #should have shape 100x1 but 100x784 @ 100x784 -> 100x1
-            res_lb = res_lb+bias_fast   #100x1
-            res_ub = res_ub+bias_fast
-            
-            end_time_2= time.time()
-            
-            diff =end_time-start_time
-            diff_2= end_time_2-start_time_2
-            print(f'update is {diff/diff_2} times faster')
-            assert False
+            rel_lb = res_lb+bias_fast   #100x1
+            rel_ub = res_ub+bias_fast
         
             return rel_lb, rel_ub
 
                         
         #backsubstitute upper bounds from layer layer_nr to layer 0
+        start_time_1= time.time()
         rel_ub = res_ub.clone()
         rel_lb = res_lb.clone()
 
@@ -330,8 +280,10 @@ def analyze(
 
         res_ub = torch.zeros((rel_ub.shape[0], rel_ub_prev.shape[1]))
         res_lb = torch.zeros((rel_lb.shape[0], rel_lb_prev.shape[1]))
-
-        #pupulate res_lb
+        
+        
+        
+        #populate res_lb
         for i in range(rel_lb.shape[0]):
             
             # if relu_list[layer_nr] == 1:
@@ -342,28 +294,44 @@ def analyze(
             coeffs = rel_lb[i, :-1]
             bias = rel_lb[i, -1]
 
-            rel_ub_prev_temp = rel_ub_prev.clone()
+            rel_ub_prev_temp = rel_ub_prev.clone()  #100x785
             rel_lb_prev_temp = rel_lb_prev.clone()
+            
+            # print(rel_ub_prev_temp.shape, "rel_ub_prev_temp")
+            # print(rel_lb_prev_temp.shape, "rel_lb_prev_temp")
+            # print(coeffs.shape, "coeffs")
+            # print(bias.shape, "bias")
+            # print(rel_lb.shape, "rel_lb")
+            
             
 
             #if the jth entry of coeffs is negative, exchange the jth row of rel_ub_prev with the jth row of rel_lb_prev
             #TODO: check if this is correct with relus: here bounds are allways the same
-            negative_coeffs_mask = coeffs < 0
+            negative_coeffs_mask = coeffs > 0   #100x1
+            #print(negative_coeffs_mask.shape, "negative_coeffs_mask")
             rel_ub_prev_temp[negative_coeffs_mask], rel_lb_prev_temp[negative_coeffs_mask] = rel_lb_prev[negative_coeffs_mask], rel_ub_prev[negative_coeffs_mask]
-                  
-
+            
+            # print(rel_ub_prev_temp.shape, "rel_ub_prev_temp")
+            # print(rel_ub_prev[negative_coeffs_mask].shape) 
+            # print(rel_ub_prev.shape)
+            # #assert False
+            #assert False
             #compute the tensor res_ub that has shape (m, k+1)
             # for j in range(rel_ub_prev.shape[1]):
             #     res_lb[i][j] = torch.matmul(rel_lb_prev_temp[:, j], coeffs)
-            res_lb[i] = torch.matmul(rel_lb_prev_temp.t(), coeffs.unsqueeze(-1)).squeeze(-1)
+            res_lb[i] = torch.matmul(rel_lb_prev_temp.t(), coeffs.unsqueeze(-1)).squeeze(-1) #785x100 @ 100x1 ->785x1
 
-
+            #print(res_lb[i].shape)
+            #assert False
             # if relu_list[layer_nr] == 0:
             #     res_lb[i][-1] = torch.matmul(rel_lb_prev_temp[:,-1], coeffs) + bias
             res_lb[i][-1] = torch.matmul(rel_lb_prev_temp[:,-1], coeffs)
+           
             res_lb[i][-1].add_(bias)
-
-
+            
+        #print(res_lb.shape,"res_lb shape") 
+        #assert False           
+        #print(rel_lb.shape, "hello")
 
         #pupulate res_ub
         for i in range(rel_ub.shape[0]):
@@ -389,8 +357,9 @@ def analyze(
             #compute the tensor res_ub that has shape (m, k+1)
             # for j in range(rel_lb_prev.shape[1]):
             #     res_ub[i][j] = torch.matmul(rel_ub_prev_temp[:, j], coeffs)
-
+           
             res_ub[i] = torch.matmul(rel_ub_prev_temp.t(), coeffs.unsqueeze(-1)).squeeze(-1)
+            
             
             # if relu_list[layer_nr] == 0:
             #     res_ub[i][-1] = torch.matmul(rel_ub_prev_temp[:,-1], coeffs) + bias
@@ -398,7 +367,66 @@ def analyze(
             res_ub[i][-1] = torch.matmul(rel_ub_prev_temp[:,-1], coeffs)
             res_ub[i][-1].add_(bias)
         
-
+        
+        end_time_1= time.time() 
+        
+        start_time_2= time.time()    
+        rel_ub_prev = rel_ubounds[layer_nr - 1].clone()
+        rel_lb_prev = rel_lbounds[layer_nr - 1].clone()
+        coeffs_new= rel_lb[:,:-1]   
+        bias_fast= rel_lb[:,-1]
+        
+        coeffs_bool_low = coeffs_new<0 
+        coeffs_bool_up  = coeffs_new>0
+                    
+        coeffs_bool_low= coeffs_bool_low.int()    
+        coeffs_bool_up = coeffs_bool_up.int()
+        
+        low_lb= coeffs_bool_low[:,:,None]*rel_ub_prev[:,None,:]
+        up_lb = coeffs_bool_up[:,:,None]*rel_lb_prev[:,None,:]
+        
+        low_ub=coeffs_bool_low[:,:,None]*rel_lb_prev[:,None,:]
+        up_ub =coeffs_bool_up[:,:,None]*rel_ub_prev[:,None,:]
+        
+        
+        matrix_lb = low_lb+up_lb #100x100x785
+        matrix_ub = low_ub+ up_ub
+        
+        #100x100x1
+        coeffs_new= coeffs_new.unsqueeze(-1)
+        
+        # 100x100x785 @ 100x100x1 -> 100x785
+        lb_res= torch.einsum("bij,bik->ij",matrix_lb, coeffs_new)
+        ub_res= torch.einsum("bij,bik->ij",matrix_ub, coeffs_new)
+        
+        # #100x100 shape
+        # inter_lb= matrix_lb[:,:,-1]
+        # inter_ub= matrix_ub[:,:,-1]
+        # #100x100x1 @ 100x100x1 ->100x1
+        # res_2_lb=torch.einsum("bij,bij->ij",inter_lb.unsqueeze(-1), coeffs_new).squeeze(-1)
+        # res_2_ub=torch.einsum("bij,bij->ij",inter_ub.unsqueeze(-1), coeffs_new).squeeze(-1)
+    
+        # lb_res[:,-1]= res_2_lb
+        # ub_res[:,-1]= res_2_ub
+        #print("okay")
+        #lb_res= torch.einsum("bij,bik->ij",matrix_lb, coeffs_new)
+        
+        lb_res[:,-1] = lb_res[:,-1]+bias_fast   #100x785 -> 100x1 + 100x1
+        ub_res[:,-1] = ub_res[:,-1]+bias_fast
+        
+        end_time_2= time.time()
+        
+        if torch.allclose(res_lb,lb_res) and torch.allclose(ub_res, res_ub):
+            print("success")
+            diff_1= end_time_1-start_time_1
+            diff_2= end_time_2- start_time_2
+            
+            print(f'increase in pace of{diff_1/diff_2} times')
+        
+        else:
+            print("Fuck")
+        
+        assert False
         assert (res_lb.shape == res_ub.shape)
         #assert torch.all(res_lb == res_ub)
         return backsubstitute_upper_nonsparse(layer_nr - 1, res_lb, res_ub)
