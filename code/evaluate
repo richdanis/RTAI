@@ -11,28 +11,28 @@
 
 
 
-for net in fc_4 fc_5
-do
-	echo Evaluating network ${net}...
-	for spec in `ls test_cases/${net}`
-	do
-		python code/verifier.py --net ${net} --spec test_cases/${net}/${spec}
-	done
-done
-
-
-# while IFS="" read -r p || [ -n "$p" ]
+# for net in  fc_6
 # do
-#   # split the line into an array
-#   IFS=',' read -r -a array <<< "$p"
-#   # assign first element to net
-#   net=${array[0]}
-#   case=${array[1]}
-#   label=${array[2]}
-#   # only if net contains "conv" at beginning
-#   if [[ $net != fc* ]]; then
-#     continue
-#   fi
-#   echo ${net} ${case} ${label}
-#   python code/verifier.py --net ${net} --spec preliminary_evaluation_test_cases/${net}/${case}  
-# done < preliminary_evaluation_test_cases/gt.txt
+# 	echo Evaluating network ${net}...
+# 	for spec in `ls test_cases/${net}`
+# 	do
+# 		python code/alpha_verifier.py --net ${net} --spec test_cases/${net}/${spec}
+# 	done
+# done
+
+
+while IFS="" read -r p || [ -n "$p" ]
+do
+  # split the line into an array
+  IFS=',' read -r -a array <<< "$p"
+  # assign first element to net
+  net=${array[0]}
+  case=${array[1]}
+  label=${array[2]}
+  # only if net contains "conv" at beginning
+  if [[ $net != conv* ]]; then
+    continue
+  fi
+  echo ${net} ${case} ${label}
+  python code/alpha_verifier.py --net ${net} --spec preliminary_evaluation_test_cases/${net}/${case}  
+done < preliminary_evaluation_test_cases/gt.txt

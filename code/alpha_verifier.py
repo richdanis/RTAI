@@ -68,14 +68,18 @@ def analyze(
 
     first_pass = True
     relu_nr = 0
+    leak_relu_nr = 0
 
     alphas = []
+    alphas_leak = []
+    neg_slopes = []
     
     #alphas = [torch.zeros(0, requires_grad = True)] * (len(net) -1)
     #alphas_1 = torch.ones(len(net) -1, 0)
 
     #define loss fucntion
-    def loss_fn(lb_1):
+    def loss_fn(lb_1, alphas):
+        
         return  - sum(lb_1)
     
     #define optimizer
@@ -629,8 +633,17 @@ def analyze(
                 relu_nr +=1
 
             elif isinstance(layer, nn.LeakyReLU):
-                lb, ub, lb_rel, ub_rel = transform_leaky_relu_rel(lb_1, ub_1, lb_rel, ub_rel, negslope = layer.negative_slope)
-                #lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
+                if first_pass == True:
+                    lambd = torch.where(ub_1 <= -lb_1, layer.negative_slope*torch.ones_like(ub), torch.ones_like(ub))
+
+                    lambd.requires_grad = True
+                    alphas_leak.append(lambd)
+                    alphas_leak[leak_relu_nr].requires_grad = True
+                    alphas_leak[leak_relu_nr].retain_grad()
+
+                lb, ub, lb_rel, ub_rel = transform_leaky_relu_rel(lb_1, ub_1, lb_rel, ub_rel, negslope = layer.negative_slope, lambd = alphas_leak[leak_relu_nr])
+                lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
+                neg_slopes.append(layer.negative_slope)
 
 
                 assert torch.all(lb <= ub)
@@ -639,10 +652,13 @@ def analyze(
                 ubounds.append(ub_1)
                 rel_lbounds.append(lb_rel)
                 rel_ubounds.append(ub_rel)
+                leak_relu_nr +=1
             else:
                 raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
             
         relu_nr = 0
+        leak_relu_nr = 0
+        
         
         #chck verification new way 
 
@@ -663,6 +679,8 @@ def analyze(
         lb, ub = transform_linear(lb_1, ub_1, weight, bias)
         lb_rel, ub_rel = transform_linear_rel( weight, bias)
         lb_1, ub_1 = backsubstitute_upper(len(net) -1, lb_rel, ub_rel)
+        rel_lbounds = []
+        rel_ubounds = []
 
         #2) check if the lower bound of the target output is greater than
 
@@ -673,18 +691,42 @@ def analyze(
             return(bool(ver))
         else:
             print("differece between lb and max ub of other classes: ", lb_1.min())
-            if first_pass == True:
-                optimizer = torch.optim.Adam(alphas, lr = 0.4)
+            if first_pass == True and len(alphas) > 0:
+                optimizer_relu = torch.optim.Adam(alphas, lr = 0.1)
+            if first_pass == True and len(alphas_leak) > 0:
+                optimizer_leaky = torch.optim.Adam(alphas_leak, lr = 0.1)
             first_pass = False
-            optimizer.zero_grad()
-            loss = loss_fn(lb_1)
-            loss.backward(retain_graph = True)
-            optimizer.step()
-            
-            for i in range(len(alphas)):
-                alphas[i] = torch.clamp(alphas[i], min=0, max=1)
-            print("1 step learning")
-            print("current loss" , loss)
+
+            if len(alphas) > 0:
+
+                optimizer_relu.zero_grad()
+                loss = loss_fn(lb_1, alphas)
+                loss.retain_grad()
+                loss.backward(retain_graph = True)
+                optimizer_relu.step()
+                with torch.no_grad():
+                    for i in range(len(alphas)):
+                        alphas[i] = alphas[i].clamp_( min=0, max=1)
+                        alphas[i].retain_grad()
+                print("1 step learning")
+                print("current loss" , loss)
+
+            if len(alphas_leak) > 0:
+                optimizer_leaky.zero_grad()
+                loss = loss_fn(lb_1, alphas_leak)
+                loss.retain_grad()
+                loss.backward(retain_graph = True)
+                optimizer_leaky.step()
+                with torch.no_grad():
+                    for i in range(len(alphas_leak)):
+                        if neg_slopes[i] <=1:
+                            alphas_leak[i] = alphas_leak[i].clamp_( min=neg_slopes[i], max=1)
+                            alphas_leak[i].retain_grad()
+                        elif neg_slopes[i] > 1:
+                            alphas_leak[i] = alphas_leak[i].clamp_( min=1, max=neg_slopes[i])
+                            alphas_leak[i].retain_grad()
+                print("1 step learning")
+                print("current loss" , loss)
 
             
             

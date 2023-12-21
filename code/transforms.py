@@ -107,7 +107,7 @@ def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd):
 
         return res_lb, res_ub, res_lb_rel, res_ub_rel
 
-def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd = 0.0):
+def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd):
         """ 
         
         Propagate (non- and relational) bounds through a ReLU layer.
@@ -120,7 +120,7 @@ def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd = 0.0):
 
         if (negslope < 1.0):
                 #TODO(1): Figure out a decission rule for the lambda values --> May not be the same as for normal relu
-                lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
+                #lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
 
                 #for lambda learning: lambd has to be between negslope and 1 (in the case negslope <=1)
 
@@ -171,7 +171,7 @@ def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd = 0.0):
         
         elif (negslope > 1.0):
                  #TODO(1): Figure out a decission rule for the lambda values --> May not be the same as for normal relu
-                lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
+                #lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
 
                 #for lambda learning: lambd has to be between negslope and 1 (in the case negslope <=1)
 
@@ -341,11 +341,11 @@ def dec_tuple(x: int, shape: Tuple) -> Tuple:
 
 def transform_conv_rel(layer, input_shape):
 
-        fc, out_shape = torch_conv_layer_to_affine(layer, input_shape[1:])
+        weight, bias, out_shape = transform_conv2d(layer, input_shape[:])
         # FC(flatten(img)) == flatten(Conv(img))
 
-        weight = fc.weight
-        bias = fc.bias
+        #weight = fc.weight
+        #bias = fc.bias
 
         lb_rel = torch.cat((weight, bias.unsqueeze(-1)), dim=-1)
         ub_rel = torch.cat((weight, bias.unsqueeze(-1)), dim=-1)

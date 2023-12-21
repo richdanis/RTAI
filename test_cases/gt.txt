@@ -36,4 +36,4 @@ conv_4,img0_mnist_0.2724.txt,not verified
 
 
 --net conv_base --spec test_cases/conv_base/img0_mnist_0.0707.txt
---net fc_6 --spec test_cases/fc_6/img0_cifar10_0.0128.txt
+--net fc_7 --spec test_cases/fc_7/img0_mnist_0.1497.txt
