@@ -54,7 +54,7 @@ def transform_linear_rel(weight, bias):
 
         return lb_rel, ub_rel
 
-def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd = 0.0):
+def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd):
         """ 
         
         Propagate (non- and relational) bounds through a ReLU layer.
@@ -65,7 +65,7 @@ def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd = 0.0):
 
         """
         #Lambda population option 1: the ith element of lmbd should be zero is the ith element of ub is bigger than -the ith element of lb, otherwise 1
-        lambd = torch.where(ub <= -lb, torch.zeros_like(ub), torch.ones_like(ub))
+        #lambd = torch.where(ub <= -lb, torch.zeros_like(ub), torch.ones_like(ub))
 
         res_lb = torch.empty(lb.shape)
         res_ub = torch.empty(ub.shape)
@@ -341,7 +341,7 @@ def dec_tuple(x: int, shape: Tuple) -> Tuple:
 
 def transform_conv_rel(layer, input_shape):
 
-        fc, out_shape = torch_conv_layer_to_affine(layer, input_shape)
+        fc, out_shape = torch_conv_layer_to_affine(layer, input_shape[1:])
         # FC(flatten(img)) == flatten(Conv(img))
 
         weight = fc.weight
@@ -630,6 +630,7 @@ def transform_leakyReLU(lb_rel, ub_rel, lb, ub, slope, alpha = 1):
                 return lb_rel, ub_rel
 
 def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
+        
 
         # init_lb: (1, 28, 28) or (3, 32, 32)
         
@@ -674,3 +675,42 @@ def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
         #ub_res = ub_res.view(out_shape)
 
         return lb_res, ub_res
+
+
+def transform_conv2d(conv, shape):
+
+        out_channels = conv.weight.shape[0]
+        kernel_size = conv.weight.shape[2]
+        stride = conv.stride[0]
+        padding = conv.padding[0]
+
+        # compute output shape
+        out_height = (shape[1] + 2 * padding - kernel_size) // stride + 1
+        out_width = (shape[2] + 2 * padding - kernel_size) // stride + 1
+        out_shape = (out_channels, out_height, out_width)
+
+        # create input matrix
+        inputs = torch.eye(shape[0] * shape[1] * shape[2])
+
+        # create index matrix
+        index = torch.arange(inputs.shape[0], dtype=torch.float).view(shape)
+
+        # unfold index
+        index = nn.functional.unfold(index, kernel_size, padding=padding, stride=stride)
+        index = index.long()
+
+        # unfold input
+        inputs = inputs[index]
+
+        # flatten weights
+        weights = conv.weight.view(out_channels, -1)
+        bias = conv.bias
+
+        # compute matrix
+        mat = torch.einsum('ij,jak->iak', weights, inputs)
+        bias = bias.unsqueeze(1)
+        bias = bias.expand(-1, mat.shape[1]).contiguous()
+        bias = bias.view(-1)
+        mat = mat.view(-1, mat.shape[-1])
+
+        return mat, bias , out_shape

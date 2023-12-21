@@ -75,6 +75,7 @@ def torch_conv_layer_to_affine(
     return fc, out_shape
 
 
+
 def range2d(to_a, to_b):
     for a in range(to_a):
         for b in range(to_b):
@@ -100,6 +101,92 @@ def dec_tuple(x: int, shape: Tuple) -> Tuple:
 
     return tuple(reversed(res))
 
+def transform_conv2d_new(conv, shape):
+
+        out_channels = conv.weight.shape[0]
+        kernel_size = conv.weight.shape[2]
+        stride = conv.stride[0]
+        padding = conv.padding[0]
+
+        # compute output shape
+        out_height = (shape[1] + 2 * padding - kernel_size) // stride + 1
+        out_width = (shape[2] + 2 * padding - kernel_size) // stride + 1
+        out_shape = (out_channels, out_height, out_width)
+
+        # create input matrix
+        inputs = torch.eye(shape[0] * shape[1] * shape[2])
+
+        # create index matrix
+        index = torch.arange(inputs.shape[0], dtype=torch.float).view(shape)
+
+        # unfold index
+        index = nn.functional.unfold(index, kernel_size, padding=padding, stride=stride)
+        # round index to nearest integer
+        index = torch.round(index)
+        index = index.long()
+
+        # unfold input
+        inputs = inputs[index]
+
+        # flatten weights
+        weights = conv.weight.view(out_channels, -1)
+        bias = conv.bias
+
+        # compute matrix
+        mat = torch.einsum('ij,jak->iak', weights, inputs)
+        bias = bias.unsqueeze(1)
+        bias = bias.expand(-1, mat.shape[1]).contiguous()
+        bias = bias.view(-1)
+        mat = mat.view(-1, mat.shape[-1])
+
+        return mat, bias, out_shape
+
+def transform_conv2d(conv, shape):
+
+        out_channels = conv.weight.shape[0]
+        kernel_size = conv.weight.shape[2]
+        stride = conv.stride[0]
+        padding = conv.padding[0]
+
+        # compute output shape
+        out_height = (shape[1] + 2 * padding - kernel_size) // stride + 1
+        out_width = (shape[2] + 2 * padding - kernel_size) // stride + 1
+        out_shape = (out_channels, out_height, out_width)
+
+        # create input matrix
+        inputs = torch.eye(shape[0] * shape[1] * shape[2])
+
+        # create index matrix
+        index = torch.arange(inputs.shape[0], dtype=torch.float).view(shape)
+
+        # unfold index
+        index = nn.functional.unfold(index, kernel_size, padding=padding, stride=stride)
+        index = index.long()
+
+        # unfold input
+        inputs = inputs[index]
+
+        # flatten weights
+        weights = conv.weight.view(out_channels, -1)
+        bias = conv.bias
+
+        # compute matrix
+        mat = torch.einsum('ij,jak->iak', weights, inputs)
+        bias = bias.unsqueeze(1)
+        bias = bias.expand(-1, mat.shape[1]).contiguous()
+        bias = bias.view(-1)
+        mat = mat.view(-1, mat.shape[-1])
+
+        return mat, bias , out_shape
+
+
+
+import torch
+
+def get_conv_matrix(conv_layer, x):
+    "return unfold(x)"
+
+    return A
 
 def main():
     parser = argparse.ArgumentParser(
@@ -159,10 +246,17 @@ def main():
         img = image.clone()
         if i==1:
             img = net[0](img)
-
+        
+        linear = get_conv_matrix(conv, inputs)
         fc, out_shape = torch_conv_layer_to_affine(conv, input_sizes[-1][1:])
+        #fc1 = torch_conv_layer_to_affine_gpt(conv, input_sizes[-1][1:])
+        mat, bias, out_shape = transform_conv2d(conv, input_sizes[-1])
+
+
+        mat1, bias1, out_shape1 = transform_conv2d_new(conv, input_sizes[-1])
         input_sizes.append(out_shape)
-        res1 = fc(img.reshape((-1))).reshape(conv(img).shape)
+       
+        res1 = (mat1@img.reshape((-1)) + bias1).reshape(conv(img).shape)
         res2 = conv(img)
         worst_error = (res1 - res2).max()
 

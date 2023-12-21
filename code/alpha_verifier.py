@@ -7,7 +7,7 @@ import time
 from networks import get_network
 from utils.loading import parse_spec
 from transforms import *
-
+from torch.optim import SGD
 
 DEVICE = "cpu"
 
@@ -50,29 +50,37 @@ def analyze(
 
     layer_nr = -1 #dont count flatten as layer, use python nr: 0-th layer is 1st linear layer
 
-    #create a list with a 1 in the ith position if the ith position is a relu layer
-    relu_list = []
 
     #create a list wiht the input sizes for the conv_layers. should be a list of tuples
     conv_input_shapes = []
     
     conv_input_shapes.append(tuple(inputs.shape))
 
-    for layer in net:
-        if isinstance(layer, nn.ReLU):
-            relu_list.append(1)
-        else:
-            relu_list.append(0)
-    #delete the first element of relu_list, because the first layer isnt counted as a layer
-    relu_list.pop(0)
-    #add a 0 at the end of relu_list, because the last layer isnt counted as a relu layer
-    relu_list.append(0)
 
     #create lists for the relational upper and lower bounds. the ith element is the tensor of relational bounds in layer i
     lbounds = []
     ubounds = []
     rel_lbounds = []
     rel_ubounds = []
+
+
+    #create list where the alpha values are stored -> ith element correcponds to alpha vector in the ith layer
+
+    first_pass = True
+    relu_nr = 0
+
+    alphas = []
+    
+    #alphas = [torch.zeros(0, requires_grad = True)] * (len(net) -1)
+    #alphas_1 = torch.ones(len(net) -1, 0)
+
+    #define loss fucntion
+    def loss_fn(lb_1):
+        return  - sum(lb_1)
+    
+    #define optimizer
+    #optimizer = torch.optim.Adam(alphas, lr = 0.01)
+
 
     def backsubstitute_upper_orig(layer_nr, res_lb, res_ub):
         """
@@ -395,7 +403,7 @@ def analyze(
 
         """
         
-        time1 = time.time()
+
         if layer_nr == 0:
             init_lb_temp = init_lb.clone()
             init_ub_temp = init_ub.clone()
@@ -421,8 +429,6 @@ def analyze(
             #assert torch.all(rel_lb <= rel_ub)
 
             return rel_lb, rel_ub
-        
-            
 
         # rel_ub = res_ub.clone()
         # rel_lb = res_lb.clone()  
@@ -515,32 +521,28 @@ def analyze(
         #assert torch.all(res_lb == res_ub)
         return backsubstitute_upper(layer_nr - 1, res_lb, res_ub)
 
-
-
-
-
-    # ub_rel = torch.eye(init_lb.numel())
-    # ub_rel = torch.reshape(ub_rel, (init_lb.shape[0], init_lb.shape[1], init_lb.shape[2], init_lb.shape[0] * init_lb.shape[1] * init_lb.shape[2]))
-    # add constant 0 for bias
-    # shape = ub_rel.shape[:-1] + (1,)
-    # ub_rel = torch.cat((ub_rel, torch.zeros(shape)), dim=-1)
-    # lb_rel = ub_rel.detach().clone()
-
-
+ 
     # propagate box through network
 
-    for layer in net:
-        layer_nr +=1
+    for i in range(5):
+        layer_nr = -1
 
-        #debugging: Assert that the elements rel_ubounds and rel_lbounds dont change after ther have been assigned
-        #assert (len(rel_ubounds) == layer_nr)
-        if isinstance(layer, nn.Flatten):
-            ub = torch.flatten(ub)
-            lb = torch.flatten(lb)
-            layer_nr -=1
-        elif isinstance(layer, nn.Linear):
-            time1 = time.time()
-            with torch.no_grad():
+        for layer in net:
+            layer_nr +=1
+
+            #debugging: Assert that the elements rel_ubounds and rel_lbounds dont change after ther have been assigned
+            #assert (len(rel_ubounds) == layer_nr)
+            if isinstance(layer, nn.Flatten):
+                if layer_nr == 0:
+                    lb = init_lb.clone()
+                    ub = init_ub.clone()
+
+                ub = torch.flatten(ub)
+                lb = torch.flatten(lb)
+                layer_nr -=1
+            elif isinstance(layer, nn.Linear):
+                time1 = time.time()
+                
                 if(layer_nr == 0):
                     lb, ub = transform_linear(lb, ub, layer.weight, layer.bias)
 
@@ -552,86 +554,145 @@ def analyze(
                 lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
 
                 assert torch.all(lb <= ub)
+                    #assert torch.all(lb_1 -lb >=-0.01)
+                    #assert torch.all(ub -ub_1 >=-0.01)
+
+
+                assert(torch.all(lb_1 <= ub_1))
+
+
+                #assert(max(lb -lb_1) < 1e-3)
+                #assert(max(ub_1 -ub) < 1e-3)
+                lbounds.append(lb_1)
+                ubounds.append(ub_1)
+
+                rel_lbounds.append(lb_rel)
+                rel_ubounds.append(ub_rel)
+                assert torch.all(lb <= ub)
+                time2 = time.time()
+                #print("time for linear layer: ", layer_nr, time2 - time1)
+            elif isinstance(layer, nn.Conv2d):  
+
+                lb_rel, ub_rel, weight, bias, out_shape = transform_conv_rel(layer, input_shape = conv_input_shapes[-1])
+
+
+
+                if layer_nr == 0:
+                    lb_1, ub_1 = lb, ub
+
+                ub = torch.flatten(ub_1)
+                lb = torch.flatten(lb_1)
+
+                lb, ub = transform_conv(lb, ub, weight, bias)
+
+                assert torch.all(lb <= ub)
+                lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
+
+                assert(torch.all(lb_1 <= ub_1))
                 #assert torch.all(lb_1 -lb >=-0.01)
                 #assert torch.all(ub -ub_1 >=-0.01)
 
+                lbounds.append(lb_1)
+                ubounds.append(ub_1)
+                rel_lbounds.append(lb_rel)
+                rel_ubounds.append(ub_rel)
 
-            assert(torch.all(lb_1 <= ub_1))
+                #calculate the input shape for the next layer
 
+                conv_input_shapes.append(out_shape)
 
-            #assert(max(lb -lb_1) < 1e-3)
-            #assert(max(ub_1 -ub) < 1e-3)
-            lbounds.append(lb_1)
-            ubounds.append(ub_1)
+                # height, width = conv_input_shapes[-1]
+                # output_height = (height - layer.kernel_size[0] + 2*layer.padding[0]) // layer.stride[0] + 1
+                # output_width = (width - layer.kernel_size[0] + 2*layer.padding[0]) // layer.stride[0] + 1
 
-            rel_lbounds.append(lb_rel)
-            rel_ubounds.append(ub_rel)
-            assert torch.all(lb <= ub)
-            time2 = time.time()
-            #print("time for linear layer: ", layer_nr, time2 - time1)
-        elif isinstance(layer, nn.Conv2d):  
-
-            lb_rel, ub_rel, weight, bias, out_shape = transform_conv_rel(layer, input_shape = conv_input_shapes[-1])
+                # conv_input_shapes.append([output_height, output_width])
 
 
+            elif isinstance(layer, nn.ReLU):
+                if first_pass == True:
+                    lambd = torch.where(ub_1 <= -lb_1, torch.zeros_like(ub), torch.ones_like(ub))
+                    lambd.requires_grad = True
+                    alphas.append(lambd)
+                    alphas[relu_nr].requires_grad = True
+                    alphas[relu_nr].retain_grad()
 
-            if layer_nr == 0:
-                lb_1, ub_1 = lb, ub
-
-            ub = torch.flatten(ub_1)
-            lb = torch.flatten(lb_1)
-
-            lb, ub = transform_conv(lb, ub, weight, bias)
-
-            assert torch.all(lb <= ub)
-            lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
-
-            assert(torch.all(lb_1 <= ub_1))
-            #assert torch.all(lb_1 -lb >=-0.01)
-            #assert torch.all(ub -ub_1 >=-0.01)
-
-            lbounds.append(lb_1)
-            ubounds.append(ub_1)
-            rel_lbounds.append(lb_rel)
-            rel_ubounds.append(ub_rel)
-
-            #calculate the input shape for the next layer
-
-            conv_input_shapes.append(out_shape)
-
-            # height, width = conv_input_shapes[-1]
-            # output_height = (height - layer.kernel_size[0] + 2*layer.padding[0]) // layer.stride[0] + 1
-            # output_width = (width - layer.kernel_size[0] + 2*layer.padding[0]) // layer.stride[0] + 1
-
-            # conv_input_shapes.append([output_height, output_width])
+                lb, ub, lb_rel, ub_rel = transform_relu_rel(lb_1, ub_1, lb_rel, ub_rel, lambd = alphas[relu_nr])
+                lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
 
 
-        elif isinstance(layer, nn.ReLU):
+                assert torch.all(lb <= ub)
+                assert lb_rel.shape == ub_rel.shape
+                lbounds.append(lb_1)
+                ubounds.append(ub_1)
+                rel_lbounds.append(lb_rel)
+                rel_ubounds.append(ub_rel)
+                relu_nr +=1
+
+            elif isinstance(layer, nn.LeakyReLU):
+                lb, ub, lb_rel, ub_rel = transform_leaky_relu_rel(lb_1, ub_1, lb_rel, ub_rel, negslope = layer.negative_slope)
+                #lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
+
+
+                assert torch.all(lb <= ub)
+                assert lb_rel.shape == ub_rel.shape
+                lbounds.append(lb_1)
+                ubounds.append(ub_1)
+                rel_lbounds.append(lb_rel)
+                rel_ubounds.append(ub_rel)
+            else:
+                raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
             
-            lb, ub, lb_rel, ub_rel = transform_relu_rel(lb_1, ub_1, lb_rel, ub_rel)
-            #lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
+        relu_nr = 0
+        
+        #chck verification new way 
 
+        #1) Treat it as a linear layer where the i-th output is the different between true_label output 
+        #and the i-th output of the network
+        #weight matrix should have minus ones at the diagonal and the column of tru_labe should be ones
 
-            assert torch.all(lb <= ub)
-            assert lb_rel.shape == ub_rel.shape
-            lbounds.append(lb_1)
-            ubounds.append(ub_1)
-            rel_lbounds.append(lb_rel)
-            rel_ubounds.append(ub_rel)
+        #bias is zero
+        weight =  -1* torch.eye(10)
+        ones = torch.ones(10, 10)
+        j = true_label
+        weight[:, j] = ones[:, j]
+        weight[j,j] = 0
+        
 
-        elif isinstance(layer, nn.LeakyReLU):
-            lb, ub, lb_rel, ub_rel = transform_leaky_relu_rel(lb_1, ub_1, lb_rel, ub_rel, negslope = layer.negative_slope)
-            #lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
+        bias = torch.zeros(10)
+        
+        lb, ub = transform_linear(lb_1, ub_1, weight, bias)
+        lb_rel, ub_rel = transform_linear_rel( weight, bias)
+        lb_1, ub_1 = backsubstitute_upper(len(net) -1, lb_rel, ub_rel)
 
+        #2) check if the lower bound of the target output is greater than
 
-            assert torch.all(lb <= ub)
-            assert lb_rel.shape == ub_rel.shape
-            lbounds.append(lb_1)
-            ubounds.append(ub_1)
-            rel_lbounds.append(lb_rel)
-            rel_ubounds.append(ub_rel)
+        ver = torch.all(lb_1 >= 0)
+        ver = bool(ver)
+        if ver:
+            print("differece between lb and max ub of other classes: ", torch.sort(lb_1)[0][1])
+            return(bool(ver))
         else:
-            raise NotImplementedError(f'Unsupported layer type: {type(layer)}')
+            print("differece between lb and max ub of other classes: ", lb_1.min())
+            if first_pass == True:
+                optimizer = torch.optim.Adam(alphas, lr = 0.4)
+            first_pass = False
+            optimizer.zero_grad()
+            loss = loss_fn(lb_1)
+            loss.backward(retain_graph = True)
+            optimizer.step()
+            
+            for i in range(len(alphas)):
+                alphas[i] = torch.clamp(alphas[i], min=0, max=1)
+            print("1 step learning")
+            print("current loss" , loss)
+
+            
+            
+
+            
+        
+            
+        
         
     #debugging: How much did backsubtitiotion work? ---> Lb and ub seem to be very very close to each other
 
@@ -645,30 +706,30 @@ def analyze(
     #and the i-th output of the network
     #weight matrix should have minus ones at the diagonal and the column of tru_labe should be ones
 
-    #bias is zero
-    weight =  -1* torch.eye(10)
-    ones = torch.ones(10, 10)
-    j = true_label
-    weight[:, j] = ones[:, j]
-    weight[j,j] = 0
+    # #bias is zero
+    # weight =  -1* torch.eye(10)
+    # ones = torch.ones(10, 10)
+    # j = true_label
+    # weight[:, j] = ones[:, j]
+    # weight[j,j] = 0
     
 
-    bias = torch.zeros(10)
-    with torch.no_grad():
-        lb, ub = transform_linear(lb_1, ub_1, weight, bias)
-        lb_rel, ub_rel = transform_linear_rel( weight, bias)
-        lb_1, ub_1 = backsubstitute_upper(layer_nr +1, lb_rel, ub_rel)
+    # bias = torch.zeros(10)
+    # with torch.no_grad():
+    #     lb, ub = transform_linear(lb_1, ub_1, weight, bias)
+    #     lb_rel, ub_rel = transform_linear_rel( weight, bias)
+    #     lb_1, ub_1 = backsubstitute_upper(len(net) -1, lb_rel, ub_rel)
 
-    #2) check if the lower bound of the target output is greater than
+    # #2) check if the lower bound of the target output is greater than
 
-    ver = torch.all(lb_1 >= 0)
-    ver = bool(ver)
-    if ver:
-        print("differece between lb and max ub of other classes: ", torch.sort(lb_1)[0][1])
-        return(bool(ver))
-    else:
-        print("differece between lb and max ub of other classes: ", lb_1.min())
-        return(bool(ver))
+    # ver = torch.all(lb_1 >= 0)
+    # ver = bool(ver)
+    # if ver:
+    #     print("differece between lb and max ub of other classes: ", torch.sort(lb_1)[0][1])
+    #     return(bool(ver))
+    # else:
+    #     print("differece between lb and max ub of other classes: ", lb_1.min())
+    #     return(bool(ver))
 
     #return bool(ver)
 
