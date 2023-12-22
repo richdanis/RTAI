@@ -11,7 +11,7 @@
 
 
 
-# for net in  fc_6
+# for net in  fc_1 fc_2 fc_3 fc_4 fc_5 fc_6
 # do
 # 	echo Evaluating network ${net}...
 # 	for spec in `ls test_cases/${net}`
@@ -30,9 +30,9 @@ do
   case=${array[1]}
   label=${array[2]}
   # only if net contains "conv" at beginning
-  if [[ $net != conv* ]]; then
+  if [[ $net != fc* ]]; then
     continue
   fi
   echo ${net} ${case} ${label}
-  python code/alpha_verifier.py --net ${net} --spec preliminary_evaluation_test_cases/${net}/${case}  
+  python code/verifier.py --net ${net} --spec preliminary_evaluation_test_cases/${net}/${case}  
 done < preliminary_evaluation_test_cases/gt.txt

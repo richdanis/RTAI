@@ -10,6 +10,7 @@ from transforms import *
 
 
 DEVICE = "cpu"
+torch.set_default_dtype(torch.float64)
 
 
 def output_diff_lb2ub(lb, ub, tue_label):
@@ -549,8 +550,8 @@ def analyze(
         weights = torch.cat((coeffs_upper_pos, coeffs_upper_inv), dim = 1)
 
         #create the matrix weight_prev (take bias out)!
-        weight_prev = torch.cat((rel_lb_prev[:,:-1], rel_ub_prev[:,:-1]), dim = 0)
-        bias_prev = torch.cat((rel_lb_prev[:,-1], rel_ub_prev[:,-1]), dim = 0)
+        weight_prev = torch.cat((rel_ub_prev[:,:-1], rel_lb_prev[:,:-1]), dim = 0)
+        bias_prev = torch.cat((rel_ub_prev[:,-1], rel_lb_prev[:,-1]), dim = 0)
 
         #compute the matrix multiplication
         res_ub[:,:-1] = weights @ weight_prev

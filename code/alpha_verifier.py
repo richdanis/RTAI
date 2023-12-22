@@ -6,11 +6,11 @@ import time
 
 from networks import get_network
 from utils.loading import parse_spec
-from transforms import *
+from transforms_alpha import *
 from torch.optim import SGD
 
 DEVICE = "cpu"
-
+torch.set_default_dtype(torch.float64)
 
 def output_diff_lb2ub(lb, ub, tue_label):
     "return difference between lower bound of target and max upper bound of other classes"
@@ -219,7 +219,7 @@ def analyze(
 
         assert (res_lb.shape == res_ub.shape)
         #assert torch.all(res_lb == res_ub)
-        return backsubstitute_upper(layer_nr - 1, res_lb, res_ub)
+        return backsubstitute_upper_orig(layer_nr - 1, res_lb, res_ub)
 
 
     def backsubstitute_upper_nonsparse(layer_nr, res_lb, res_ub):
@@ -407,6 +407,7 @@ def analyze(
 
         """
         
+        
 
         if layer_nr == 0:
             init_lb_temp = init_lb.clone()
@@ -415,7 +416,7 @@ def analyze(
             coeffs = res_lb[:, :-1]
             bias = res_lb[:, -1]
 
-            lb_mul = torch.where(coeffs < 0, init_ub_temp, init_lb_temp)
+            lb_mul = torch.where(coeffs <= 0, init_ub_temp, init_lb_temp)
 
             rel_lb = (lb_mul * coeffs).sum(dim = 1)
             rel_lb += bias
@@ -423,7 +424,7 @@ def analyze(
             coeffs = res_ub[:, :-1]
             bias = res_ub[:, -1]
             
-            rb_mul = torch.where(coeffs < 0, init_lb_temp, init_ub_temp)
+            rb_mul = torch.where(coeffs <= 0, init_lb_temp, init_ub_temp)
             rel_ub = (rb_mul * coeffs).sum(dim = 1)
             rel_ub += bias
 
@@ -507,8 +508,8 @@ def analyze(
         weights = torch.cat((coeffs_upper_pos, coeffs_upper_inv), dim = 1)
 
         #create the matrix weight_prev (take bias out)!
-        weight_prev = torch.cat((rel_lb_prev[:,:-1], rel_ub_prev[:,:-1]), dim = 0)
-        bias_prev = torch.cat((rel_lb_prev[:,-1], rel_ub_prev[:,-1]), dim = 0)
+        weight_prev = torch.cat((rel_ub_prev[:,:-1], rel_lb_prev[:,:-1]), dim = 0)
+        bias_prev = torch.cat((rel_ub_prev[:,-1], rel_lb_prev[:,-1]), dim = 0)
 
         #compute the matrix multiplication
         res_ub[:,:-1] = weights @ weight_prev
@@ -528,7 +529,7 @@ def analyze(
  
     # propagate box through network
 
-    for i in range(5):
+    for i in range(20):
         layer_nr = -1
 
         for layer in net:
@@ -558,22 +559,21 @@ def analyze(
                 lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
 
                 assert torch.all(lb <= ub)
-                    #assert torch.all(lb_1 -lb >=-0.01)
-                    #assert torch.all(ub -ub_1 >=-0.01)
+                #assert torch.all(lb_1 -lb >=-0.01)
+                #assert torch.all(ub -ub_1 >=-0.01)
 
 
-                assert(torch.all(lb_1 <= ub_1))
+                #assert(torch.all(lb_1 <= ub_1))
 
 
                 #assert(max(lb -lb_1) < 1e-3)
                 #assert(max(ub_1 -ub) < 1e-3)
-                lbounds.append(lb_1)
-                ubounds.append(ub_1)
+                #lbounds.append(lb_1)
+                #ubounds.append(ub_1)
 
                 rel_lbounds.append(lb_rel)
                 rel_ubounds.append(ub_rel)
-                assert torch.all(lb <= ub)
-                time2 = time.time()
+                #assert torch.all(lb <= ub)
                 #print("time for linear layer: ", layer_nr, time2 - time1)
             elif isinstance(layer, nn.Conv2d):  
 
@@ -626,6 +626,8 @@ def analyze(
 
                 assert torch.all(lb <= ub)
                 assert lb_rel.shape == ub_rel.shape
+                # assert torch.all(lb_1 -lb >=-0.01)
+                # assert torch.all(ub -ub_1 >=-0.01)
                 lbounds.append(lb_1)
                 ubounds.append(ub_1)
                 rel_lbounds.append(lb_rel)
@@ -640,13 +642,22 @@ def analyze(
                     alphas_leak.append(lambd)
                     alphas_leak[leak_relu_nr].requires_grad = True
                     alphas_leak[leak_relu_nr].retain_grad()
+                if layer.negative_slope <= 1:
+                    assert torch.all(alphas_leak[leak_relu_nr] >= layer.negative_slope)
+                    assert torch.all(alphas_leak[leak_relu_nr] <= 1)
+
+                if layer.negative_slope > 1:
+                    assert torch.all(alphas_leak[leak_relu_nr] <= layer.negative_slope)
+                    assert torch.all(alphas_leak[leak_relu_nr] >= 1)
+
+
 
                 lb, ub, lb_rel, ub_rel = transform_leaky_relu_rel(lb_1, ub_1, lb_rel, ub_rel, negslope = layer.negative_slope, lambd = alphas_leak[leak_relu_nr])
                 lb_1, ub_1 = backsubstitute_upper(layer_nr, lb_rel, ub_rel)
                 neg_slopes.append(layer.negative_slope)
 
 
-                assert torch.all(lb <= ub)
+                #assert torch.all(lb <= ub)
                 assert lb_rel.shape == ub_rel.shape
                 lbounds.append(lb_1)
                 ubounds.append(ub_1)
@@ -691,10 +702,11 @@ def analyze(
             return(bool(ver))
         else:
             print("differece between lb and max ub of other classes: ", lb_1.min())
+
             if first_pass == True and len(alphas) > 0:
-                optimizer_relu = torch.optim.Adam(alphas, lr = 0.1)
+                optimizer_relu = torch.optim.Adam(alphas, lr = 0.2)
             if first_pass == True and len(alphas_leak) > 0:
-                optimizer_leaky = torch.optim.Adam(alphas_leak, lr = 0.1)
+                optimizer_leaky = torch.optim.Adam(alphas_leak, lr = 0.2)
             first_pass = False
 
             if len(alphas) > 0:

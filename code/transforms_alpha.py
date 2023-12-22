@@ -56,7 +56,7 @@ def transform_linear_rel(weight, bias):
 
         return lb_rel, ub_rel
 
-def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd = 0):
+def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd):
         """ 
         
         Propagate (non- and relational) bounds through a ReLU layer.
@@ -68,7 +68,7 @@ def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd = 0):
         """
         torch.set_default_dtype(torch.float64)
         #Lambda population option 1: the ith element of lmbd should be zero is the ith element of ub is bigger than -the ith element of lb, otherwise 1
-        lambd = torch.where(ub <= -lb, torch.zeros_like(ub), torch.ones_like(ub))
+        #lambd = torch.where(ub <= -lb, torch.zeros_like(ub), torch.ones_like(ub))
 
         res_lb = torch.empty(lb.shape)
         res_ub = torch.empty(ub.shape)
@@ -110,7 +110,7 @@ def transform_relu_rel(lb, ub, lb_rel, ub_rel, lambd = 0):
 
         return res_lb, res_ub, res_lb_rel, res_ub_rel
 
-def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd = 0):
+def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd):
         """ 
         
         Propagate (non- and relational) bounds through a ReLU layer.
@@ -123,7 +123,7 @@ def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd = 0):
 
         if (negslope < 1.0):
                 #TODO(1): Figure out a decission rule for the lambda values --> May not be the same as for normal relu
-                lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
+                #lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
 
                 #for lambda learning: lambd has to be between negslope and 1 (in the case negslope <=1)
 
@@ -178,7 +178,7 @@ def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd = 0):
         
         elif (negslope > 1.0):
                  #TODO(1): Figure out a decission rule for the lambda values --> May not be the same as for normal relu
-                lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
+                #lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
 
                 #for lambda learning: lambd has to be between negslope and 1 (in the case negslope <=1)
 
@@ -216,8 +216,8 @@ def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd = 0):
                                 res_lb_rel[i, :] = torch.zeros_like(res_ub_rel[i, :])
                                 # res_lb_rel[i, i] = 1 - (lb[i]*(negslope - 1))/(ub[i] - lb[i])
                                 # res_lb_rel[i, -1] = (lb[i]*(negslope - 1))/(1-(lb[i]/ub[i]))
-                                #epsilon = 1e-4
-                                res_lb_rel[i,i] = (ub[i] - negslope*lb[i])/(ub[i] - lb[i])
+                                epsilon = 1e-4
+                                res_lb_rel[i,i] = (ub[i] - negslope*lb[i])/(ub[i] - lb[i] + epsilon)
                                 res_lb_rel[i,-1] = ub[i]*(1-res_lb_rel[i,i])
 
 
@@ -225,7 +225,7 @@ def transform_leaky_relu_rel(lb, ub, lb_rel, ub_rel, negslope,  lambd = 0):
         
         elif (negslope == 1.0):
                  #TODO(1): Figure out a decission rule for the lambda values --> May not be the same as for normal relu
-                lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
+                #lambd = torch.where(ub <= -lb, negslope*torch.ones_like(ub), torch.ones_like(ub))
 
                 #for lambda learning: lambd has to be between negslope and 1 (in the case negslope <=1)
 
@@ -351,7 +351,7 @@ def dec_tuple(x: int, shape: Tuple) -> Tuple:
 
 def transform_conv_rel(layer, input_shape):
 
-        weight, bias , out_shape = transform_conv2d(layer, input_shape[:])
+        weight, bias, out_shape = transform_conv2d(layer, input_shape[:])
         # FC(flatten(img)) == flatten(Conv(img))
 
         #weight = fc.weight
@@ -687,53 +687,7 @@ def evaluate_bounds(init_lb, init_ub, lb_rel, ub_rel):
         return lb_res, ub_res
 
 
-
-
-
-
 def transform_conv2d(conv, shape):
-
-        out_channels = conv.weight.shape[0]
-        kernel_size = conv.weight.shape[2]
-        stride = conv.stride[0]
-        padding = conv.padding[0]
-
-        # compute output shape
-        out_height = (shape[1] + 2 * padding - kernel_size) // stride + 1
-        out_width = (shape[2] + 2 * padding - kernel_size) // stride + 1
-        out_shape = (out_channels, out_height, out_width)
-
-        # create input matrix
-        inputs = torch.eye(shape[0] * shape[1] * shape[2])
-
-        # create index matrix
-        # need to begin indexing at 1 to cope with padding
-        index = torch.arange(1, inputs.shape[0] + 1, dtype=torch.float).view(shape)
-
-        # unfold index
-        index = nn.functional.unfold(index, kernel_size, padding=padding, stride=stride)
-        # round index to nearest integer
-        index = torch.round(index)
-        index = index.long()
-
-        # unfold input
-        # prepend zeros to input to deal with padding
-        inputs = torch.cat((torch.zeros(1,inputs.shape[1]), inputs), dim=0)
-        inputs = inputs[index]
-
-        # flatten weights
-        weights = conv.weight.view(out_channels, -1)
-        bias = conv.bias
-
-        # compute matrix
-        mat = torch.einsum('ij,jak->iak', weights, inputs)
-        bias = bias.unsqueeze(1)
-        bias = bias.expand(-1, mat.shape[1]).contiguous()
-        bias = bias.view(-1)
-        
-        mat = mat.view(-1, mat.shape[-1])
-
-        return mat, bias , out_shape
 
         out_channels = conv.weight.shape[0]
         kernel_size = conv.weight.shape[2]
