@@ -1,6 +1,7 @@
 import argparse
 import torch
 import torch.nn as nn
+import time
 
 from networks import get_network
 from utils.loading import parse_spec
@@ -47,7 +48,7 @@ def analyze(
             conv_bounds, shape = transform_conv2d(layer, shape)
             bounds.append(conv_bounds)
         elif isinstance(layer, nn.ReLU):
-            curr_bound = back(bounds.copy())
+            curr_bound = back(bounds)
             lb, ub = eval(curr_bound, init_lb, init_ub)
             # heuristic alpha initialization, minimize area of triangle
             alpha = torch.where(ub.abs() > lb.abs(), torch.ones_like(lb), torch.zeros_like(lb))
@@ -55,7 +56,7 @@ def analyze(
             alphas.append(alpha)
             bounds.append(ReLU_Bounds(lb, ub, 0, alpha))
         elif isinstance(layer, nn.LeakyReLU):
-            curr_bound = back(bounds.copy())
+            curr_bound = back(bounds)
             lb, ub = eval(curr_bound, init_lb, init_ub)
             alpha = torch.where(ub.abs() > lb.abs(), torch.ones_like(lb), torch.full(lb.shape, layer.negative_slope))
             alpha.requires_grad = True
@@ -81,9 +82,20 @@ def analyze(
     while not verified:
         
         # CHECK VERIFICATION
+        t = time.time()
         update_ReLUs(bounds, init_lb, init_ub)
-        bound = back(bounds.copy())
+        relu_time = time.time() - t
+        print("ReLU Update:", relu_time)
+
+        t = time.time()
+        bound = back(bounds)
+        back_time = time.time() - t
+        print("Back:", back_time)
+
+        t = time.time()
         lb, _ = eval(bound, init_lb, init_ub)
+        eval_time = time.time() - t
+        print("Eval:", eval_time)
         verified = (lb.min() >= 0)
 
         if not alphas or verified:
@@ -91,6 +103,7 @@ def analyze(
 
         print(lb)
 
+        t = time.time()
         # BACKWARD PASS
         optimizer.zero_grad()
         # relu of lb
@@ -98,6 +111,9 @@ def analyze(
         loss = -lb.sum()
         loss.backward()
         optimizer.step()
+
+        backward_time = time.time() - t
+        print("Alpha Update:", backward_time)
 
         iterations += 1
         if iterations > 6:

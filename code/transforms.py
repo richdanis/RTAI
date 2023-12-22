@@ -20,8 +20,8 @@ class Bounds():
                 curr_ub = curr_bound.ub_mat
                 curr_ub_bias = curr_bound.ub_bias
 
-                pos_ub = torch.where(curr_ub > 0, curr_ub, torch.zeros_like(curr_ub))
-                neg_ub = torch.where(curr_ub < 0, curr_ub, torch.zeros_like(curr_ub))
+                pos_ub = (curr_ub > 0) * curr_ub
+                neg_ub = (curr_ub < 0) * curr_ub
 
                 res_ub = pos_ub @ self.ub_mat + neg_ub @ self.lb_mat
                 res_ub_bias = pos_ub @ self.ub_bias + neg_ub @ self.lb_bias + curr_ub_bias
@@ -29,8 +29,8 @@ class Bounds():
                 curr_lb = curr_bound.lb_mat
                 curr_lb_bias = curr_bound.lb_bias
 
-                pos_lb = torch.where(curr_lb > 0, curr_lb, torch.zeros_like(curr_lb))
-                neg_lb = torch.where(curr_lb < 0, curr_lb, torch.zeros_like(curr_lb))
+                pos_lb = (curr_lb > 0) * curr_lb
+                neg_lb = (curr_lb < 0) * curr_lb
 
                 res_lb = pos_lb @ self.lb_mat + neg_lb @ self.ub_mat
                 res_lb_bias = pos_lb @ self.lb_bias + neg_lb @ self.ub_bias + curr_lb_bias
@@ -75,12 +75,12 @@ class ReLU_Bounds():
 
                         # compute upper slope and bias
                         upper_slope = torch.where(crossing, (self.ub - self.neg_slope*self.lb) / (self.ub - self.lb), torch.zeros_like(self.lb))
-                        weight_ub = torch.diag(ones + neg_ones + upper_slope)
+                        weight_ub = ones + neg_ones + upper_slope
                         bias_ub = torch.where(crossing, self.ub * self.lb * (self.neg_slope - 1) / (self.ub - self.lb), torch.zeros_like(self.lb))
 
                         # compute lower slope and bias
                         lower_slope = torch.where(crossing, self.alpha, torch.zeros_like(self.lb))
-                        weight_lb = torch.diag(ones + neg_ones + lower_slope)
+                        weight_lb = ones + neg_ones + lower_slope
                         bias_lb = torch.zeros_like(self.lb)
 
                         #return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
@@ -94,12 +94,12 @@ class ReLU_Bounds():
 
                         # compute lower slope and bias
                         lower_slope = torch.where(crossing, (self.ub - self.neg_slope*self.lb) / (self.ub - self.lb), torch.zeros_like(self.lb))
-                        weight_lb = torch.diag(ones + neg_ones + lower_slope)
+                        weight_lb = ones + neg_ones + lower_slope
                         bias_lb = torch.where(crossing, self.ub * self.lb * (self.neg_slope - 1) / (self.ub - self.lb), torch.zeros_like(self.lb))
 
                         # compute upper slope and bias
                         upper_slope = torch.where(crossing, self.alpha, torch.zeros_like(self.lb))
-                        weight_ub = torch.diag(ones + neg_ones + upper_slope)
+                        weight_ub = ones + neg_ones + upper_slope
                         bias_ub = torch.zeros_like(self.lb)
 
                         #return Bounds(weight_lb, weight_ub, bias_lb, bias_ub)
@@ -113,14 +113,29 @@ class ReLU_Bounds():
 
                 # get new bounds using updated alpha
 
-                #prev_bound = self.get_bounds()
-
                 self.get_bounds()
 
-                # perform backsubstitution
+                # backsubstitution on new bounds
+        
+                curr_ub = curr_bound.ub_mat
+                curr_ub_bias = curr_bound.ub_bias
 
-                #return prev_bound.back(curr_bound)
-                return Bounds(self.lb_mat, self.ub_mat, self.lb_bias, self.ub_bias).back(curr_bound)
+                pos_ub = (curr_ub > 0) * curr_ub
+                neg_ub = (curr_ub < 0) * curr_ub
+
+                res_ub = self.ub_mat.unsqueeze(0) * pos_ub + self.lb_mat.unsqueeze(0) * neg_ub
+                res_ub_bias = pos_ub @ self.ub_bias + neg_ub @ self.lb_bias + curr_ub_bias
+
+                curr_lb = curr_bound.lb_mat
+                curr_lb_bias = curr_bound.lb_bias
+
+                pos_lb = (curr_lb > 0) * curr_lb
+                neg_lb = (curr_lb < 0) * curr_lb
+
+                res_lb = self.lb_mat.unsqueeze(0) * pos_lb + self.ub_mat.unsqueeze(0) * neg_lb
+                res_lb_bias = pos_lb @ self.lb_bias + neg_lb @ self.ub_bias + curr_lb_bias
+
+                return Bounds(res_lb, res_ub, res_lb_bias, res_ub_bias)
 
 def transform_linear(weight, bias):
 
@@ -179,7 +194,7 @@ def update_ReLUs(bounds, init_lb, init_ub):
                 if isinstance(bounds[i], ReLU_Bounds):
 
                         # get new lb, ub
-                        curr_bounds = back(bounds[:i].copy())
+                        curr_bounds = back(bounds[:i])
                         lb, ub = eval(curr_bounds, init_lb, init_ub)
 
                         # update ReLU
@@ -193,11 +208,11 @@ def back(bounds):
 
         # backsubstitute bounds through network
 
-        curr_bound = bounds.pop()
+        bounds_iter = reversed(bounds)
+        curr_bound = next(bounds_iter)
 
-        while bounds:
-
-                curr_bound = bounds.pop().back(curr_bound)
+        for bound in bounds_iter:
+                curr_bound = bound.back(curr_bound)
 
         return curr_bound
 

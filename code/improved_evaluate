@@ -9,7 +9,7 @@ do
   case=${array[1]}
   label=${array[2]}
   # only if net contains "conv" at beginning
-  if [[ $net != fc* ]]; then
+  if [[ $net != conv_3* ]]; then
     continue
   fi
   echo ${net} ${case} ${label}
