@@ -1,7 +1,6 @@
 import argparse
 import torch
 import torch.nn as nn
-import time
 
 from networks import get_network
 from utils.loading import parse_spec
@@ -82,20 +81,11 @@ def analyze(
     while not verified:
         
         # CHECK VERIFICATION
-        t = time.time()
         update_ReLUs(bounds, init_lb, init_ub)
-        relu_time = time.time() - t
-        print("ReLU Update:", relu_time)
 
-        t = time.time()
         bound = back(bounds)
-        back_time = time.time() - t
-        print("Back:", back_time)
 
-        t = time.time()
         lb, _ = eval(bound, init_lb, init_ub)
-        eval_time = time.time() - t
-        print("Eval:", eval_time)
         verified = (lb.min() >= 0)
 
         if not alphas or verified:
@@ -103,7 +93,6 @@ def analyze(
 
         print(lb)
 
-        t = time.time()
         # BACKWARD PASS
         optimizer.zero_grad()
         # relu of lb
@@ -111,9 +100,6 @@ def analyze(
         loss = -lb.sum()
         loss.backward()
         optimizer.step()
-
-        backward_time = time.time() - t
-        print("Alpha Update:", backward_time)
 
         iterations += 1
         if iterations > 6:
