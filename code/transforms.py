@@ -142,7 +142,8 @@ def transform_conv2d(conv, shape):
         inputs = torch.eye(shape[0] * shape[1] * shape[2])
 
         # create index matrix
-        index = torch.arange(inputs.shape[0], dtype=torch.float).view(shape)
+        # need to begin indexing at 1 to cope with padding
+        index = torch.arange(1, inputs.shape[0] + 1, dtype=torch.float).view(shape)
 
         # unfold index
         index = nn.functional.unfold(index, kernel_size, padding=padding, stride=stride)
@@ -151,6 +152,8 @@ def transform_conv2d(conv, shape):
         index = index.long()
 
         # unfold input
+        # prepend zeros to input to deal with padding
+        inputs = torch.cat((torch.zeros(1,inputs.shape[1]), inputs), dim=0)
         inputs = inputs[index]
 
         # flatten weights
@@ -162,6 +165,7 @@ def transform_conv2d(conv, shape):
         bias = bias.unsqueeze(1)
         bias = bias.expand(-1, mat.shape[1]).contiguous()
         bias = bias.view(-1)
+        
         mat = mat.view(-1, mat.shape[-1])
 
         return Bounds(mat, mat, bias, bias), out_shape
